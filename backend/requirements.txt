@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+celery[redis]
+python-multipart
+pydantic-settings
+openpyxl
+pytest
+httpx
+pyjwt
+argon2-cffi
+email-validator

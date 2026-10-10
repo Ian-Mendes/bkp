@@ -1,0 +1,28 @@
+# Ambiente
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Dados e uploads
+*.zip
+*.csv
+*.xlsx
+uploads/
+dados_insta_exportados_json.zip
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Docker
+pgdata/

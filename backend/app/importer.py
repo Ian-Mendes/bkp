@@ -2,8 +2,15 @@ import json, re, zipfile
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
-MAX_MEMBER_BYTES = 200 * 1024 * 1024
+MAX_MEMBER_BYTES = 100 * 1024 * 1024    # por arquivo de dentro do ZIP (descompactado)
+MAX_TOTAL_BYTES = 300 * 1024 * 1024     # soma dos arquivos lidos (descompactados)
+MAX_ENTRIES = 5000                      # entradas no ZIP
+MAX_RATIO = 200                         # taxa de compressão suspeita (ZIP bomb)
+
 USERNAME_RE = re.compile(r"^[a-z0-9._]{1,30}$")
+
+class ExportError(ValueError):
+    """Problema no arquivo enviado, com mensagem segura para mostrar ao usuário."""
 
 # Regex para JSON
 FOLLOWERS_JSON_RE = re.compile(r"^followers_\d+\.json$")
@@ -104,8 +111,12 @@ def parse_export(source):
               "ranges": {"followers": None, "following": None}}
     stamps = {"followers": [], "following": []}
 
+    total = 0
     with zipfile.ZipFile(source) as zf:
-        for info in zf.infolist():
+        entries = zf.infolist()
+        if len(entries) > MAX_ENTRIES:
+            raise ExportError("O ZIP tem arquivos demais.")
+        for info in entries:
             base = info.filename.lower().rsplit("/", 1)[-1]
 
             # Detecta tipo e formato
@@ -121,9 +132,18 @@ def parse_export(source):
                 continue
 
             if info.file_size > MAX_MEMBER_BYTES:
-                raise ValueError(f"{base} grande demais")
+                raise ExportError(f"{base} é grande demais.")
+            if info.compress_size and info.file_size / info.compress_size > MAX_RATIO:
+                raise ExportError(f"{base} tem taxa de compressão suspeita.")
+            total += info.file_size
+            if total > MAX_TOTAL_BYTES:
+                raise ExportError("O conteúdo do ZIP é grande demais.")
 
-            raw_bytes = zf.read(info)
+            # leitura limitada: não confia no tamanho declarado no cabeçalho
+            with zf.open(info) as member:
+                raw_bytes = member.read(MAX_MEMBER_BYTES + 1)
+            if len(raw_bytes) > MAX_MEMBER_BYTES:
+                raise ExportError(f"{base} é grande demais.")
 
             if fmt == "json":
                 data = json.loads(raw_bytes.decode("utf-8"))

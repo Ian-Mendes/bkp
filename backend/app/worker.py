@@ -2,6 +2,7 @@ import os, uuid
 from datetime import datetime, timedelta, timezone
 from celery import Celery
 from sqlalchemy import select
+from . import mailer
 from .db import SessionLocal
 from .models import Order, Profile
 from .providers import get_provider
@@ -9,6 +10,7 @@ from .services import delete_orders, retention_days
 
 celery = Celery("worker", broker=os.environ["REDIS_URL"], backend=os.environ["REDIS_URL"])
 celery.conf.task_acks_late = True
+celery.conf.broker_transport_options = {"socket_connect_timeout": 3}
 celery.conf.beat_schedule = {
     "purge-expired-orders": {"task": "purge_expired", "schedule": 24 * 3600},
 }
@@ -44,6 +46,10 @@ def process_order(self, order_id: str):
             db.commit()
         order.status = "done"
         db.commit()
+
+@celery.task(name="send_email", autoretry_for=(OSError,), retry_backoff=True, max_retries=5)
+def send_email(to: str, subject: str, text: str):
+    mailer.send_smtp(to, subject, text)
 
 @celery.task(name="purge_expired")
 def purge_expired():

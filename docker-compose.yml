@@ -13,6 +13,14 @@ services:
 
   redis:
     image: redis:7
+    # com REDIS_PASSWORD no .env (e o mesmo valor em REDIS_URL) o Redis exige senha; vazio = sem senha (dev)
+    command: ["sh", "-c", "exec redis-server $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+  mailpit:
+    image: axllent/mailpit
+    ports: ["127.0.0.1:8025:8025"]   # interface web dos e-mails capturados (SMTP em mailpit:1025)
 
   api:
     build: ./backend
@@ -34,6 +42,7 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}
+      mailpit: {condition: service_started}
 
   beat:
     build: ./backend
@@ -43,6 +52,18 @@ services:
     depends_on:
       db: {condition: service_healthy}
       redis: {condition: service_started}
+
+  frontend:
+    build: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [api]
 
 volumes:
   pgdata:

@@ -11,7 +11,7 @@ from .auth import router as auth_router, current_user
 from .db import Base, engine, get_db
 from .models import Order, Profile, User
 from .importer import ExportError
-from .services import create_order_from_zip, delete_orders, retention_days
+from .services import create_order_from_zip, delete_orders, retention_days, run_enrichment
 from . import exporter, rate
 
 UPLOAD_DIR = "/data/uploads"
@@ -154,14 +154,11 @@ def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Sessi
 
 @app.post("/orders/{order_id}/start")
 def start_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    from .worker import process_order
     order = _get_order(db, order_id, user)
     if order.status not in ("parsed", "failed"):
         raise HTTPException(409, f"Pedido em estado '{order.status}'")
-    order.status = "queued"
-    db.commit()
-    process_order.delay(str(order.id))
-    return {"order_id": str(order.id), "status": "queued"}
+    status = run_enrichment(str(order.id))
+    return {"order_id": str(order.id), "status": status}
 
 @app.delete("/orders/{order_id}", status_code=204)
 def delete_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):

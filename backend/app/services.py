@@ -1,8 +1,11 @@
-import os
+"""Regras de negócio: pedidos (criação, análise, enriquecimento) e retenção."""
+import os, uuid
 from datetime import datetime, timezone
-from sqlalchemy import delete
+from sqlalchemy import delete, select
+from .db import SessionLocal
 from .importer import parse_export
 from .models import Order, Profile
+from .providers import get_provider
 
 WINDOW_DAYS = 380   # ~1 ano: indício de filtro de período no export
 
@@ -56,3 +59,40 @@ def delete_orders(db, order_ids):
     db.execute(delete(Order).where(Order.id.in_(order_ids)))
     db.commit()
     return len(order_ids)
+
+BATCH = 100
+
+def run_enrichment(order_id: str) -> str:
+    """Enriquece os perfis pendentes de um pedido, hoje de forma síncrona.
+
+    Com `NullProvider` a execução é instantânea. Ao ligar um provider real
+    (rate limit, rede), volte a rodar numa fila (Celery) — o `rate_limited`
+    abaixo marca o ponto de retry a restaurar."""
+    provider = get_provider()
+    with SessionLocal() as db:
+        order = db.get(Order, uuid.UUID(order_id))
+        order.status = "processing"
+        db.commit()
+        while True:
+            rows = db.scalars(
+                select(Profile)
+                .where(Profile.order_id == order.id, Profile.status == "pending")
+                .order_by(Profile.id).limit(BATCH)
+            ).all()
+            if not rows:
+                break
+            for p in rows:
+                r = provider.fetch(p.username)
+                if r.status == "rate_limited":
+                    db.commit()                    # salva o progresso do lote
+                    order.status = "parsed"        # sem fila de retry: volta a permitir "start"
+                    db.commit()
+                    return order.status
+                p.status = r.status
+                p.followers_count = r.followers_count
+                p.following_count = r.following_count
+                p.bio = r.bio
+            db.commit()
+        order.status = "done"
+        db.commit()
+        return order.status

@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app import main, worker, rate, auth
+from app import main, worker, rate, auth, services
 from tests.helpers import OUTBOX
 
 REAL_ENQUEUE = auth.enqueue_email   # a fixture abaixo troca por um fake; os testes de fila usam o real
@@ -48,5 +48,6 @@ def env(tmp_path, monkeypatch):
     app.dependency_overrides[get_db] = override
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(worker, "SessionLocal", Session)
+    monkeypatch.setattr(services, "SessionLocal", Session)
     yield TestClient(app), Session, tmp_path
     app.dependency_overrides.clear()

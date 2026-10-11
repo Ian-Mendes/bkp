@@ -1,8 +1,9 @@
 import csv, io, os
 import openpyxl
 from sqlalchemy import select
-from app import main, worker
+from app import main
 from app.models import Profile
+from app.services import run_enrichment
 from tests.helpers import make_zip, register, upload, OLD, NEW
 
 def _setup(env):
@@ -35,7 +36,7 @@ def test_perfil_so_guarda_campos_permitidos():
 
 def test_worker_processa_tudo(env):
     client, Session, h, body = _setup(env)
-    worker.process_order.apply(args=[body["order_id"]]).get()
+    run_enrichment(body["order_id"])
     r = client.get(f"/orders/{body['order_id']}", headers=h).json()
     assert r["status"] == "done"
     assert r["profiles_by_status"] == {"not_enriched": 3}
@@ -43,7 +44,7 @@ def test_worker_processa_tudo(env):
 def test_csv_ordenacao_null_zero_e_formula(env):
     client, Session, h, body = _setup(env)
     oid = body["order_id"]
-    worker.process_order.apply(args=[oid]).get()
+    run_enrichment(oid)
     with Session() as db:
         ps = {x.username: x for x in db.scalars(select(Profile))}
         ps["ana_silva"].followers_count = 500
@@ -66,7 +67,7 @@ def test_csv_ordenacao_null_zero_e_formula(env):
 def test_relatorio_e_xlsx(env):
     client, Session, h, body = _setup(env)
     oid = body["order_id"]
-    worker.process_order.apply(args=[oid]).get()
+    run_enrichment(oid)
     rep = client.get(f"/orders/{oid}/report", headers=h).json()
     assert rep["total_profiles"] == 3
     assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio"}

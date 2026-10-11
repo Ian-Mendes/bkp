@@ -1,4 +1,13 @@
-import json, zipfile
+import json, re, zipfile
+
+OUTBOX = []   # e-mails "enviados" durante o teste: (to, subject, text)
+
+def last_token(to=None):
+    """Token do link do último e-mail enviado (para o destinatário, se informado)."""
+    for dest, _, text in reversed(OUTBOX):
+        if to is None or dest == to:
+            return re.search(r"token=([\w.\-]+)", text).group(1)
+    raise AssertionError("nenhum e-mail enviado")
 
 OLD = 1_420_070_400    # 2015-01-01
 NEW = 1_790_000_000    # ~set/2026
@@ -16,9 +25,18 @@ def make_zip(path, followers, following):
                     json.dumps({"relationships_following": [entry(u, t) for u, t in following]}))
         zf.writestr(base + "following_hashtags.json", json.dumps({"x": [entry("naoconta", 1)]}))
 
-def register(client, email="ana@empresa.com.br", password=PASSWORD):
+def register_unverified(client, email="ana@empresa.com.br", password=PASSWORD):
     r = client.post("/auth/register", json={"email": email, "password": password})
     assert r.status_code == 201, r.text
+    return r
+
+def register(client, email="ana@empresa.com.br", password=PASSWORD):
+    """Cadastra, confirma o e-mail e faz login; devolve o header de autorização."""
+    register_unverified(client, email, password)
+    r = client.post("/auth/verify-email", json={"token": last_token(email), "password": password})
+    assert r.status_code == 200, r.text
+    r = client.post("/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 def upload(client, path, headers, **data):

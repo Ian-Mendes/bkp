@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import (JSON, String, Integer, Text, DateTime, ForeignKey,
+from sqlalchemy import (JSON, Boolean, false, String, Integer, Text, DateTime, ForeignKey,
                         UniqueConstraint, Uuid)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
@@ -13,6 +13,7 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 class Order(Base):

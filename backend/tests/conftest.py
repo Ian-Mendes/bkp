@@ -3,7 +3,8 @@ import os
 # Variáveis de ambiente para testes (executados fora do Docker)
 os.environ.setdefault("JWT_SECRET", "segredo-de-teste-apenas-para-pytest-0123456789")
 os.environ.setdefault("DATABASE_URL", "sqlite://")   # <-- ADICIONADO
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")  # <-- ADICIONADO
+# REDIS_URL era necessário p/ importar o worker (Celery); reativar ao reintroduzir a fila
+# os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
 from fastapi.testclient import TestClient

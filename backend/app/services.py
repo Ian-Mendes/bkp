@@ -1,6 +1,6 @@
 """Regras de negócio: pedidos (criação, análise, enriquecimento) e retenção."""
 import os, uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from .db import SessionLocal
 from .importer import parse_export
@@ -65,8 +65,8 @@ BATCH = 100
 def run_enrichment(order_id: str) -> str:
     """Enriquece os perfis pendentes de um pedido, hoje de forma síncrona.
 
-    Com `NullProvider` a execução é instantânea. Ao ligar um provider real
-    (rate limit, rede), volte a rodar numa fila (Celery) — o `rate_limited`
+    Com `NullProvider` a execução é instantânea. Ao integrar um provider real
+    reavaliar a necessidade de rodar numa fila (Celery) — o `rate_limited`
     abaixo marca o ponto de retry a restaurar."""
     provider = get_provider()
     with SessionLocal() as db:
@@ -82,6 +82,9 @@ def run_enrichment(order_id: str) -> str:
             if not rows:
                 break
             for p in rows:
+                # Ao implementar o provider, considerar o uso 
+                # de lib como tenacity para controlar retentativas
+                # e conter rate_limit de provedores
                 r = provider.fetch(p.username)
                 if r.status == "rate_limited":
                     db.commit()                    # salva o progresso do lote
@@ -96,3 +99,13 @@ def run_enrichment(order_id: str) -> str:
         order.status = "done"
         db.commit()
         return order.status
+
+def purge_expired_orders() -> int:
+    """Retenção: apaga pedidos mais antigos que RETENTION_DAYS (exceto em processamento)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days())
+    with SessionLocal() as db:
+        ids = db.scalars(
+            select(Order.id).where(Order.created_at < cutoff,
+                                   Order.status.notin_(("queued", "processing")))
+        ).all()
+        return delete_orders(db, ids)

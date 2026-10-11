@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
-from app import worker
+from app import services
 from app.models import Order, Profile
 from tests.helpers import make_zip, register, upload, OLD, NEW
 
@@ -47,6 +47,6 @@ def test_retencao_apaga_pedidos_antigos(env):
     with Session() as db:
         db.get(Order, uuid.UUID(oid)).created_at = datetime.now(timezone.utc) - timedelta(days=400)
         db.commit()
-    assert worker.purge_expired.apply().get() == 1
+    assert services.purge_expired_orders() == 1
     assert client.get(f"/orders/{oid}", headers=h).status_code == 404
     assert client.get(f"/orders/{oid2}", headers=h2).status_code == 200

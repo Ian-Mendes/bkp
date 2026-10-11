@@ -7,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
+from apscheduler.schedulers.background import BackgroundScheduler
 from .auth import router as auth_router, current_user
 from .db import Base, engine, get_db
 from .models import Order, Profile, User
 from .importer import ExportError
-from .services import create_order_from_zip, delete_orders, retention_days, run_enrichment
+from .services import (create_order_from_zip, delete_orders, retention_days,
+                       run_enrichment, purge_expired_orders)
 from . import exporter, rate
 
 UPLOAD_DIR = "/data/uploads"
@@ -33,7 +35,14 @@ async def lifespan(app):
             # contas novas nascem não confirmadas (mesmo default de um banco criado do zero)
             conn.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    yield
+    scheduler = BackgroundScheduler()
+    # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)
+    scheduler.add_job(purge_expired_orders, "interval", hours=24)
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 app = FastAPI(
     title="Backup enriquecido", lifespan=lifespan,

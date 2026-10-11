@@ -3,6 +3,7 @@ uvicorn[standard]
 sqlalchemy
 psycopg[binary]
 celery[redis]
+apscheduler
 python-multipart
 pydantic-settings
 openpyxl

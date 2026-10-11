@@ -93,26 +93,124 @@ bkp/
 
 ---
 
-## Como Rodar (Docker)
+## Como Rodar (Docker) — Passo a Passo
+
+### Pré-requisitos
+
+- Git
+- Docker e Docker Compose v2 (o comando é `docker compose`, sem hífen)
+- `openssl` (para gerar senhas; já vem no Linux e no macOS)
+
+Confira:
 
 ```bash
-# 1. Clonar
+git --version
+docker --version
+docker compose version
+```
+
+### 1. Clonar
+
+```bash
 git clone https://github.com/Ian-Mendes/bkp.git
 cd bkp
-
-# 2. Configurar variáveis (no PowerShell: Copy-Item .env.example .env)
-cp .env.example .env
-# Editar .env: POSTGRES_PASSWORD, a mesma senha no DATABASE_URL e um JWT_SECRET
-
-# 3. Subir
-docker compose up -d --build
-
-# 4. Rodar testes
-docker compose exec api pytest
-
-# 5. Health check
-curl http://localhost:8000/health
 ```
+
+> O Docker Compose usa o **nome da pasta** como prefixo dos containers e volumes
+> (pasta `bkp` → `bkp-api-1`, `bkp_pgdata`; pasta `saas-backup` → `saas-backup-api-1`).
+
+### 2. Permissão para usar o Docker (só Linux)
+
+Se `docker ps` responder `permission denied while trying to connect to the docker API`,
+seu usuário não está no grupo `docker`. Duas saídas:
+
+**a) Usar `sudo` em todo comando:** `sudo docker compose ...`
+
+**b) Adicionar o usuário ao grupo `docker` (uma vez só):**
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker        # vale só para este terminal; para todos, faça logout/login
+docker ps            # deve funcionar sem sudo
+```
+
+> ⚠️ Quem acessa o socket do Docker tem, na prática, poder equivalente a root na máquina.
+> Em máquina pessoal de desenvolvimento isso costuma ser aceitável. Se quiser evitar,
+> use o [Docker rootless](https://docs.docker.com/engine/security/rootless/).
+>
+> Não use `chown` no `/var/run/docker.sock`: o Docker recria o socket ao reiniciar
+> e a permissão se perde.
+>
+> Se usou `sudo` com `git clone` ou `git pull`, devolva o dono dos arquivos:
+> `sudo chown -R $USER:$USER .` e use `git` sem `sudo` daqui para frente.
+
+### 3. Configurar o `.env` (passo mais importante)
+
+O `.env.example` traz três campos **vazios ou de exemplo** que você precisa preencher
+**antes do primeiro `docker compose up`**:
+
+| Variável | O que é | Regra |
+|----------|---------|-------|
+| `POSTGRES_PASSWORD` | Senha do banco | Não pode ficar vazia |
+| `DATABASE_URL` | URL de conexão da API ao banco | A senha dentro dela deve ser **idêntica** à `POSTGRES_PASSWORD` (troque o `SENHA`) |
+| `JWT_SECRET` | Assina os tokens de login | 32+ caracteres |
+
+**Jeito rápido (Linux/macOS)**, gera tudo aleatório e grava nas linhas certas:
+
+```bash
+cp .env.example .env
+
+PW=$(openssl rand -hex 16)
+JWT=$(openssl rand -hex 32)
+
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$PW/" .env
+sed -i "s#^DATABASE_URL=.*#DATABASE_URL=postgresql+psycopg://app:$PW@db:5432/backup#" .env
+sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$JWT/" .env
+```
+
+No macOS, troque `sed -i` por `sed -i ''`. No Windows (PowerShell), use
+`Copy-Item .env.example .env` e edite os três campos à mão.
+
+**Confira o resultado:**
+
+```bash
+grep -nE 'POSTGRES_PASSWORD|DATABASE_URL|JWT_SECRET' .env
+```
+
+Deve aparecer a mesma senha em `POSTGRES_PASSWORD` e dentro de `DATABASE_URL`,
+nenhum `SENHA` sobrando e um `JWT_SECRET` com 64 caracteres. Cada variável deve
+aparecer **uma vez só** (linha duplicada vazia sobrescreve a preenchida).
+
+Regras para a senha do banco: use só letras e números. Caracteres como `@ / : #`
+quebram a `DATABASE_URL`.
+
+### 4. Subir
+
+```bash
+docker compose up -d --build
+```
+
+O primeiro build leva alguns minutos (baixa imagens e instala dependências).
+O `-d` roda em segundo plano: pode fechar o terminal que os containers continuam de pé.
+
+### 5. Validar que está tudo certo
+
+Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
+
+| # | Comando | Resultado esperado |
+|---|---------|--------------------|
+| 1 | `docker compose ps` | 7 serviços `Up` (`api`, `worker`, `beat`, `db`, `redis`, `mailpit`, `frontend`); `db` e `mailpit` com `(healthy)` |
+| 2 | `docker compose logs api --tail 20` | Termina com `Application startup complete` e **sem** traceback |
+| 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
+| 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
+| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`), provando que o banco aceita a senha |
+| 6 | `docker compose exec api pytest` | `52 passed` |
+| 7 | Abrir http://localhost:3000 | Tela de login do frontend |
+| 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
+
+> ⚠️ **O `pytest` passar não prova que o banco está conectado.** Os testes passam mesmo
+> quando a API não consegue autenticar no Postgres. Sempre confirme também os passos
+> 2, 3 e 5.
 
 Serviços e portas (todos só em localhost):
 
@@ -122,25 +220,84 @@ Serviços e portas (todos só em localhost):
 | API (Swagger em `/docs`, só em desenvolvimento) | http://localhost:8000 |
 | Mailpit (e-mails capturados) | http://localhost:8025 |
 
-Notas:
-- O `JWT_SECRET` precisa ter 32+ caracteres e `POSTGRES_PASSWORD` deve ser igual à senha dentro do `DATABASE_URL`. Use só letras e números na senha.
-- O Postgres só lê `POSTGRES_PASSWORD` ao criar o volume. Se trocar a senha depois, rode `docker compose down -v` (apaga o banco).
-- Mudou o `.env`? `docker compose restart` não relê o arquivo: use `docker compose up -d --force-recreate`.
-- `worker` e `beat` não têm hot reload: após mudar o código deles, `docker compose restart worker beat`.
-- Mudou o `package.json` do frontend? `docker compose up -d --build frontend`.
-- O login só funciona depois de confirmar o e-mail (veja a seção abaixo).
+### 6. Criar a primeira conta
 
-### Testar confirmação de e-mail e recuperação de senha
+1. Abra http://localhost:3000 e cadastre-se.
+2. Abra o Mailpit (http://localhost:8025) e clique no link de confirmação.
+3. Na tela que abrir, informe a **senha do cadastro** para ativar a conta.
+4. Faça login.
 
-Em desenvolvimento nenhum e-mail sai de verdade. Cadastre-se em http://localhost:3000 e abra
-o Mailpit em http://localhost:8025 para clicar no link recebido.
+---
 
-- **Confirmação:** o link abre `/verify-email`, que pede a **senha do cadastro** para ativar a conta.
-- **Recuperação:** em "Esqueci minha senha" informe o e-mail; o link do Mailpit vale 30 min e só funciona uma vez.
-- **Não chegou e-mail?** Veja `docker compose logs worker --tail 30` (tarefa `send_email`).
-- Cada fluxo (cadastro, reenvio, recuperação) envia no máximo 6 e-mails por hora para o mesmo endereço.
+## Solução de Problemas
 
-### Resetar os dados
+Procure pelo sintoma. Quando não souber a causa, o primeiro passo é sempre
+`docker compose ps` e depois `docker compose logs <serviço> --tail 50`.
+
+| Sintoma | Causa | Solução |
+|---------|-------|---------|
+| `permission denied ... docker.sock` | Usuário fora do grupo `docker` | Use `sudo` ou veja o passo 2 |
+| `db` sai com código 1; `dependency failed to start`; `service "api" is not running` | `POSTGRES_PASSWORD` vazio. O log do `db` diz `Database is uninitialized and superuser password is not specified` | Preencha o `.env` (passo 3), depois `docker compose down -v && docker compose up -d` |
+| `curl` responde `Recv failure: Conexão fechada pela outra ponta`; `api` aparece `Up` | O app falhou ao iniciar e o uvicorn ficou de pé sem aplicação. Veja o traceback em `docker compose logs api` | Corrija o erro apontado no log (as duas linhas abaixo são as mais comuns) |
+| `RuntimeError: JWT_SECRET precisa ter pelo menos 32 caracteres` | `JWT_SECRET` vazio ou curto | Preencha com `openssl rand -hex 32` e rode `docker compose up -d --force-recreate api worker beat` |
+| `password authentication failed for user "app"` | Senha da `DATABASE_URL` diferente da gravada no volume do Postgres | Deixe as duas senhas iguais no `.env` e recrie o banco: `docker compose down -v && docker compose up -d` (**apaga os dados do banco**) |
+| `Bind for 127.0.0.1:8025 failed: port is already allocated` (ou 3000/8000) | Outra coisa usa a porta, quase sempre containers de outra cópia do projeto | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` para achar o dono; remova com `docker rm -f NOME`, ou na outra pasta rode `docker compose down`. Se não for Docker: `sudo ss -ltnp \| grep 8025` |
+| Mudei o `.env` e nada mudou | `restart` não relê o `.env` | `docker compose up -d --force-recreate` |
+| Mudei o código do `worker`/`beat` e nada mudou | Eles não têm hot reload | `docker compose restart worker beat` |
+| Mudei `requirements.txt` ou `package.json` | Imagem precisa ser reconstruída | `docker compose up -d --build` |
+| Erro de `column ... does not exist` após atualizar | Não há migrações ainda (`create_all` + `ALTER` pontual) e o banco antigo ficou sem a coluna nova | Em desenvolvimento: `docker compose down -v && docker compose up -d` (apaga os dados) |
+
+> **Por que o banco "ignora" a senha nova?** O Postgres só lê `POSTGRES_PASSWORD`
+> na **primeira** inicialização do volume. Depois disso, a senha fica gravada no
+> volume e mudar o `.env` não a altera. Por isso, ao trocar a senha, é preciso
+> recriar o volume com `docker compose down -v`.
+
+---
+
+## Atualizar o Projeto (depois de um `git pull`)
+
+```bash
+git pull                      # sem sudo
+git diff HEAD@{1} -- .env.example   # apareceu variável nova? copie para o seu .env
+docker compose up -d --build
+docker compose ps
+docker compose logs api --tail 20
+```
+
+- O seu `.env` **não** é atualizado pelo `git pull` (ele não é versionado; só o
+  `.env.example` é). Compare os dois e acrescente o que faltar.
+- Se o `git pull` recusar por alterações locais: `git stash`, `git pull`, `git stash pop`.
+- Depois de atualizar, repita a validação do passo 5.
+
+---
+
+## Comandos do Dia a Dia
+
+```bash
+docker compose ps                 # estado dos serviços
+docker compose logs -f api        # acompanhar logs de um serviço
+docker compose restart api        # reiniciar um serviço
+docker compose down               # parar tudo (mantém os dados)
+docker compose up -d              # subir de novo
+```
+
+> ⚠️ `docker compose down -v` **apaga os volumes** (banco, uploads). Use só quando
+> quiser recomeçar do zero.
+
+### Deixar rodando de forma permanente
+
+Para os serviços voltarem sozinhos depois de reiniciar a máquina ou de uma queda,
+adicione em cada serviço do `docker-compose.yml`:
+
+```yaml
+restart: unless-stopped
+```
+
+E garanta que o Docker inicia com o sistema (Linux): `sudo systemctl enable docker`.
+
+---
+
+## Resetar os Dados
 
 ```bash
 # Apagar tudo (banco, uploads e e-mails do Mailpit)
@@ -156,10 +313,23 @@ docker compose exec redis redis-cli FLUSHALL
 
 ---
 
+## Testar Confirmação de E-mail e Recuperação de Senha
+
+Em desenvolvimento nenhum e-mail sai de verdade. Cadastre-se em http://localhost:3000 e abra
+o Mailpit em http://localhost:8025 para clicar no link recebido.
+
+- **Confirmação:** o link abre `/verify-email`, que pede a **senha do cadastro** para ativar a conta.
+- **Recuperação:** em "Esqueci minha senha" informe o e-mail; o link do Mailpit vale 30 min e só funciona uma vez.
+- **Não chegou e-mail?** Veja `docker compose logs worker --tail 30` (tarefa `send_email`).
+- Cada fluxo (cadastro, reenvio, recuperação) envia no máximo 6 e-mails por hora para o mesmo endereço.
+- O login só funciona depois de confirmar o e-mail.
+
+---
+
 ## Variáveis de Ambiente (`.env`)
 
 ```env
-# Banco
+# Banco (a senha da DATABASE_URL deve ser igual à POSTGRES_PASSWORD)
 POSTGRES_PASSWORD=troque_esta_senha
 DATABASE_URL=postgresql+psycopg://app:troque_esta_senha@db:5432/backup
 
@@ -206,7 +376,8 @@ Os valores de e-mail e de segurança têm padrão no código (Mailpit, desenvolv
 
 O frontend lê `NEXT_PUBLIC_API_URL` (padrão `http://localhost:8000`); ver `frontend/.env.example`.
 
-**Nunca comite o `.env` real.** Use `.env.example` como modelo.
+**Nunca comite o `.env` real** (confira se ele está no `.gitignore`). Use `.env.example` como modelo
+e gere um `JWT_SECRET` e uma senha de banco diferentes para cada ambiente, principalmente produção.
 
 ---
 
@@ -397,3 +568,4 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - Instagram Help Center: <https://help.instagram.com/> (buscar "Baixar suas informações")
 - ANPD: <https://www.gov.br/anpd/pt-br>
 - Meta for Developers: <https://developers.facebook.com/terms/>
+- Docker rootless: <https://docs.docker.com/engine/security/rootless/>

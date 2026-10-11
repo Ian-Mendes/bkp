@@ -1,36 +1,18 @@
 import smtplib
+from starlette.background import BackgroundTasks
 from starlette.requests import Request
-from app import mailer, worker, main
+from app import mailer, main
 from tests.conftest import REAL_ENQUEUE
 
 # ---------- enqueue_email ----------
 
-def test_enqueue_envia_para_a_fila(monkeypatch):
-    chamadas = []
-    monkeypatch.setattr(worker.send_email, "apply_async",
-                        lambda **kw: chamadas.append(kw))
-    REAL_ENQUEUE("ana@empresa.com.br", "Assunto", "Corpo")
-    assert chamadas[0]["args"] == ("ana@empresa.com.br", "Assunto", "Corpo")
-    assert chamadas[0]["retry_policy"]["max_retries"] == 1      # falha rápida se o Redis cair
-
-def test_enqueue_com_fila_fora_do_ar_nao_derruba_a_requisicao(monkeypatch):
-    def boom(**kw):
-        raise ConnectionError("redis fora")
-    monkeypatch.setattr(worker.send_email, "apply_async", boom)
-    REAL_ENQUEUE("ana@empresa.com.br", "Assunto", "Corpo")      # não deve levantar exceção
-
-# ---------- tarefa send_email ----------
-
-def test_tarefa_send_email_chama_o_smtp(monkeypatch):
-    enviados = []
-    monkeypatch.setattr(mailer, "send_smtp", lambda to, s, t: enviados.append((to, s, t)))
-    worker.send_email.run("ana@empresa.com.br", "Assunto", "Corpo")
-    assert enviados == [("ana@empresa.com.br", "Assunto", "Corpo")]
-
-def test_tarefa_repete_em_erro_de_rede():
-    # smtplib.SMTPException herda de OSError, que é o que autoretry_for cobre
-    assert issubclass(smtplib.SMTPException, OSError)
-    assert OSError in worker.send_email.autoretry_for
+def test_enqueue_agenda_envio_smtp():
+    bg = BackgroundTasks()
+    REAL_ENQUEUE(bg, "ana@empresa.com.br", "Assunto", "Corpo")
+    assert len(bg.tasks) == 1
+    task = bg.tasks[0]
+    assert task.func == mailer.send_smtp
+    assert task.args == ("ana@empresa.com.br", "Assunto", "Corpo")
 
 # ---------- mailer ----------
 

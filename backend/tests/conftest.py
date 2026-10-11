@@ -29,7 +29,7 @@ def fake_rate(monkeypatch):
 def fake_email(monkeypatch):
     OUTBOX.clear()
     monkeypatch.setattr(auth, "enqueue_email",
-                        lambda to, subject, text: OUTBOX.append((to, subject, text)))
+                        lambda bg, to, subject, text: OUTBOX.append((to, subject, text)))
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):

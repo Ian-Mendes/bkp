@@ -1,5 +1,11 @@
-import logging
-from fastapi import APIRouter, Depends, HTTPException, Request
+"""Autenticação: cadastro, login, confirmação de e-mail e recuperação de senha.
+
+E-mails são enviados com `BackgroundTasks` do FastAPI (rodam depois da resposta,
+no mesmo processo). Suficiente para o volume baixo do MVP; não há retry nem
+persistência. Se um provedor SMTP real exigir confiabilidade, mova o envio para
+uma fila (Celery/Redis) — o ponto único de troca é `enqueue_email`.
+"""
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -12,7 +18,6 @@ from .security import (hash_password, verify_password, create_token,
                        create_purpose_token, decode_purpose_token,
                        password_fingerprint)
 
-log = logging.getLogger(__name__)
 EMAILS_PER_ADDRESS = 6          # e-mails por endereço de destino/hora, em cada fluxo
 VERIFY_MINUTES = 24 * 60
 RESET_MINUTES = 30
@@ -39,35 +44,29 @@ class ResetIn(BaseModel):
     token: str = Field(min_length=1, max_length=2048)
     password: str = Field(min_length=10, max_length=128)
 
-def enqueue_email(to: str, subject: str, text: str) -> None:
-    """Envia em segundo plano (Celery). Falha de fila não derruba a requisição."""
-    try:
-        from .worker import send_email
-        # falha rápida se o Redis estiver fora (não deixa o cadastro pendurado)
-        send_email.apply_async(args=(to, subject, text), retry=True,
-                               retry_policy={"max_retries": 1, "interval_start": 0.1, "interval_max": 0.3})
-    except Exception:
-        log.exception("Falha ao enfileirar e-mail para %s", to)
+def enqueue_email(background_tasks: BackgroundTasks, to: str, subject: str, text: str) -> None:
+    """Agenda o envio para depois da resposta; o SMTP não bloqueia a requisição."""
+    background_tasks.add_task(mailer.send_smtp, to, subject, text)
 
 NL = chr(10)
 
 def _body(*parts: str) -> str:
     return (NL * 2).join(parts)
 
-def _send_verification(user: User) -> None:
+def _send_verification(user: User, background_tasks: BackgroundTasks) -> None:
     token = create_purpose_token(user.id, VERIFY_EMAIL, VERIFY_MINUTES,
                                  fp=password_fingerprint(user.password_hash))
     link = f"{mailer.frontend_url()}/verify-email?token={token}"
-    enqueue_email(user.email, "Confirme seu e-mail", _body(
+    enqueue_email(background_tasks, user.email, "Confirme seu e-mail", _body(
         "Olá!",
         "Confirme seu e-mail para ativar sua conta (o link vale por 24 horas):" + NL + link,
         "Se você não criou esta conta, ignore esta mensagem."))
 
-def _send_reset(user: User) -> None:
+def _send_reset(user: User, background_tasks: BackgroundTasks) -> None:
     token = create_purpose_token(user.id, RESET_PASSWORD, RESET_MINUTES,
                                  fp=password_fingerprint(user.password_hash))
     link = f"{mailer.frontend_url()}/reset-password?token={token}"
-    enqueue_email(user.email, "Redefinição de senha", _body(
+    enqueue_email(background_tasks, user.email, "Redefinição de senha", _body(
         "Olá!",
         "Para definir uma nova senha (o link vale por 30 minutos e só pode ser usado uma vez):" + NL + link,
         "Se você não pediu isso, ignore esta mensagem; sua senha continua a mesma."))
@@ -95,15 +94,16 @@ def _email_budget(email: str, flow: str) -> None:
 
 REGISTERED = {"message": "Se o cadastro for possível, enviamos um e-mail com as instruções."}
 
-def _send_already_registered(user: User) -> None:
-    enqueue_email(user.email, "Tentativa de cadastro", _body(
+def _send_already_registered(user: User, background_tasks: BackgroundTasks) -> None:
+    enqueue_email(background_tasks, user.email, "Tentativa de cadastro", _body(
         "Olá!",
         "Alguém tentou criar uma conta com este e-mail, mas ele já está cadastrado. "
         "Se foi você, entre normalmente ou use \"Esqueci minha senha\" em " + mailer.frontend_url() + "/login",
         "Se não foi você, ignore esta mensagem; nada foi alterado."))
 
 @router.post("/register", status_code=201)
-def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
+def register(body: RegisterIn, request: Request, background_tasks: BackgroundTasks,
+             db: Session = Depends(get_db)):
     if not rate.hit(f"reg:{_ip(request)}", 10, 3600):
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     email = body.email.lower()
@@ -116,15 +116,15 @@ def register(body: RegisterIn, request: Request, db: Session = Depends(get_db)):
         user = User(email=email, password_hash=password_hash)
         db.add(user)
         db.commit()
-        _send_verification(user)
+        _send_verification(user, background_tasks)
     elif existing.email_verified:
-        _send_already_registered(existing)
+        _send_already_registered(existing, background_tasks)
     else:
         # conta pendente: vale a senha do cadastro mais recente e os links anteriores são invalidados.
         # Evita que quem cadastrou o e-mail de outra pessoa primeiro fique com a senha da conta.
         existing.password_hash = password_hash
         db.commit()
-        _send_verification(existing)
+        _send_verification(existing, background_tasks)
     return REGISTERED
 
 @router.post("/login")
@@ -166,25 +166,27 @@ def verify_email(body: VerifyIn, request: Request, db: Session = Depends(get_db)
     return {"message": "E-mail confirmado. Você já pode entrar."}
 
 @router.post("/resend-verification", status_code=202)
-def resend_verification(body: EmailIn, request: Request, db: Session = Depends(get_db)):
+def resend_verification(body: EmailIn, request: Request, background_tasks: BackgroundTasks,
+                        db: Session = Depends(get_db)):
     email = body.email.lower()
     if not rate.hit(f"resend:{_ip(request)}:{email}", 5, 3600):
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     _email_budget(email, "verify")
     user = db.scalar(select(User).where(User.email == email))
     if user and not user.email_verified:
-        _send_verification(user)
+        _send_verification(user, background_tasks)
     return GENERIC
 
 @router.post("/forgot-password", status_code=202)
-def forgot_password(body: EmailIn, request: Request, db: Session = Depends(get_db)):
+def forgot_password(body: EmailIn, request: Request, background_tasks: BackgroundTasks,
+                    db: Session = Depends(get_db)):
     email = body.email.lower()
     if not rate.hit(f"forgot:{_ip(request)}:{email}", 5, 3600):
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     _email_budget(email, "forgot")
     user = db.scalar(select(User).where(User.email == email))
     if user:
-        _send_reset(user)
+        _send_reset(user, background_tasks)
     return GENERIC
 
 @router.post("/reset-password")

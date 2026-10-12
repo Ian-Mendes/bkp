@@ -201,6 +201,8 @@ docker compose up -d --build
 O primeiro build leva alguns minutos (baixa imagens e instala dependências).
 O `-d` roda em segundo plano: pode fechar o terminal que os containers continuam de pé.
 
+> Atalho: `make dev` equivale a `docker compose up -d --build` (e cria o `.env` se faltar).
+
 ### 5. Validar que está tudo certo
 
 Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
@@ -301,6 +303,24 @@ restart: unless-stopped
 ```
 
 E garanta que o Docker inicia com o sistema (Linux): `sudo systemctl enable docker`.
+
+---
+
+## Makefile
+
+Atalhos para os comandos mais comuns (tudo em container; nunca `pytest`/`pip`/`npm` na máquina):
+
+| Comando | Efeito |
+|---------|--------|
+| `make setup` | Cria o `.env` a partir do `.env.example` (não sobrescreve) e avisa se `JWT_SECRET` está curto |
+| `make dev` | `docker compose up -d --build` (cria o `.env` se faltar) |
+| `make build` | `docker compose build` |
+| `make test` | `docker compose exec api pytest` |
+| `make prod` | `docker compose -f docker-compose.yml --profile prod up -d --build` (gateway Caddy) |
+| `make prod-down` | `docker compose -f docker-compose.yml --profile prod down` |
+| `make down` | `docker compose down` |
+| `make reset` | `docker compose down -v && docker compose up -d --build` |
+| `make logs` | `docker compose logs -f` |
 
 ---
 

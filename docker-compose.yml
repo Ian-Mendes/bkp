@@ -54,8 +54,8 @@ services:
   #     redis: {condition: service_started}
 
   frontend:
-    build: ./frontend
-    ports: ["127.0.0.1:3000:80"]
+    build:
+      context: ./frontend
     depends_on: [api]
 
 volumes:

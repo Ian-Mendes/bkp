@@ -1,3 +1,11 @@
+"""Autenticação: cadastro, login, confirmação de e-mail e recuperação de senha.
+
+E-mails são enviados com `BackgroundTasks` do FastAPI (rodam depois da resposta,
+no mesmo processo). Suficiente para o volume baixo do MVP; não há retry nem
+persistência. Se um provedor SMTP real exigir confiabilidade, mova o envio para
+uma fila (Celery/Redis) — o ponto único de troca é `enqueue_email`.
+"""
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select

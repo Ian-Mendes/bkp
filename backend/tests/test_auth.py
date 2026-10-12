@@ -27,6 +27,7 @@ def test_login_errado_e_sem_token(env):
     assert r.status_code == 401
     r = client.post("/auth/login", json={"email": "ninguem@empresa.com.br", "password": PASSWORD})
     assert r.status_code == 401
+    client.cookies.clear()   # o register() deixou o cookie de sessão no cliente
     assert client.get("/orders").status_code == 401
     assert client.get("/orders", headers={"Authorization": "Bearer lixo"}).status_code == 401
 
@@ -185,3 +186,9 @@ def test_esgotar_cadastro_nao_bloqueia_recuperacao_de_senha(env, monkeypatch):
     OUTBOX.clear()
     r = client.post("/auth/forgot-password", json={"email": "ana@empresa.com.br"})
     assert r.status_code == 202 and len(OUTBOX) == 1       # a recuperação continua funcionando
+def test_cookie_de_sessao_autentica_e_logout_limpa(env):
+    client, _, _ = env
+    register(client)
+    assert client.get("/orders").status_code == 200   # cookie guardado pelo login
+    client.cookies.clear()
+    assert client.get("/orders").status_code == 401   # sem cookie, sem acesso

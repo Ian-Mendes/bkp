@@ -5,7 +5,7 @@ no mesmo processo). Suficiente para o volume baixo do MVP; não há retry nem
 persistência. Se um provedor SMTP real exigir confiabilidade, mova o envio para
 uma fila (Celery/Redis) — o ponto único de troca é `enqueue_email`.
 """
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -16,14 +16,45 @@ from .models import User
 from .security import (hash_password, verify_password, create_token,
                        decode_token, DUMMY_HASH, VERIFY_EMAIL, RESET_PASSWORD,
                        create_purpose_token, decode_purpose_token,
-                       password_fingerprint)
+                       password_fingerprint, REFRESH_DAYS,
+                       create_refresh_token, decode_refresh_token)
 
 EMAILS_PER_ADDRESS = 6          # e-mails por endereço de destino/hora, em cada fluxo
+
 VERIFY_MINUTES = 24 * 60
 RESET_MINUTES = 30
 
+COOKIE_NAME = "bkp_session"
+REFRESH_COOKIE = "bkp_refresh"
+COOKIE_PATH = "/"
+PRODUCTION = __import__("os").getenv("APP_ENV", "development") == "production"
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
+
+
+# ---------- cookie helpers ----------
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=COOKIE_NAME, value=token,
+        max_age=60 * 60,  # 1h, igual ao TOKEN_MINUTES padrão
+        httponly=True, secure=PRODUCTION, samesite="lax", path=COOKIE_PATH,
+    )
+
+def _set_refresh_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE, value=token,
+        max_age=REFRESH_DAYS * 24 * 60 * 60,
+        httponly=True, secure=PRODUCTION, samesite="lax", path=COOKIE_PATH,
+    )
+
+def _clear_cookies(response: Response) -> None:
+    response.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
+    response.delete_cookie(REFRESH_COOKIE, path=COOKIE_PATH)
+
+
+# ---------- schemas ----------
 
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -48,6 +79,8 @@ def enqueue_email(background_tasks: BackgroundTasks, to: str, subject: str, text
     """Agenda o envio para depois da resposta; o SMTP não bloqueia a requisição."""
     background_tasks.add_task(mailer.send_smtp, to, subject, text)
 
+# ---------- email helpers ----------
+
 NL = chr(10)
 
 def _body(*parts: str) -> str:
@@ -55,7 +88,8 @@ def _body(*parts: str) -> str:
 
 def _send_verification(user: User, background_tasks: BackgroundTasks) -> None:
     token = create_purpose_token(user.id, VERIFY_EMAIL, VERIFY_MINUTES,
-                                 fp=password_fingerprint(user.password_hash))
+                                 fp=password_fingerprint(user.password_hash),
+                                 ver=user.token_version)
     link = f"{mailer.frontend_url()}/verify-email?token={token}"
     enqueue_email(background_tasks, user.email, "Confirme seu e-mail", _body(
         "Olá!",
@@ -64,7 +98,8 @@ def _send_verification(user: User, background_tasks: BackgroundTasks) -> None:
 
 def _send_reset(user: User, background_tasks: BackgroundTasks) -> None:
     token = create_purpose_token(user.id, RESET_PASSWORD, RESET_MINUTES,
-                                 fp=password_fingerprint(user.password_hash))
+                                 fp=password_fingerprint(user.password_hash),
+                                 ver=user.token_version)
     link = f"{mailer.frontend_url()}/reset-password?token={token}"
     enqueue_email(background_tasks, user.email, "Redefinição de senha", _body(
         "Olá!",
@@ -72,27 +107,34 @@ def _send_reset(user: User, background_tasks: BackgroundTasks) -> None:
         "Se você não pediu isso, ignore esta mensagem; sua senha continua a mesma."))
 
 
-def current_user(creds=Depends(bearer), db: Session = Depends(get_db)) -> User:
-    if creds is None:
+# ---------- dependencies ----------
+
+def current_user(request: Request, creds=Depends(bearer), db: Session = Depends(get_db)) -> User:
+    """Lê Authorization (compat) OU cookie httpOnly."""
+    token = creds.credentials if creds else request.cookies.get(COOKIE_NAME)
+    if not token:
         raise HTTPException(401, "Não autenticado")
-    decoded = decode_token(creds.credentials)
+    decoded = decode_token(token)
     user = db.get(User, decoded[0]) if decoded else None
-    # sessão amarrada à senha: após trocar a senha, tokens antigos deixam de valer
-    if user is None or decoded[1] != password_fingerprint(user.password_hash):
+    # confere fingerprint da senha E versão (revogação em massa)
+    if (user is None
+            or decoded[1] != password_fingerprint(user.password_hash)
+            or decoded[2] != user.token_version):
         raise HTTPException(401, "Token inválido ou expirado")
     return user
+
 
 def _ip(request: Request) -> str:
     return request.client.host if request.client else "?"
 
 def _email_budget(email: str, flow: str) -> None:
-    """Teto de e-mails por destinatário, independente do IP (evita encher a caixa de terceiros).
-    Aplicado antes de consultar o banco, então a resposta não revela se a conta existe.
-    A cota é por fluxo: esgotar o cadastro ou o reenvio não bloqueia a recuperação de senha."""
     if not rate.hit(f"mail:{flow}:{email}", EMAILS_PER_ADDRESS, 3600):
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
 
+
 REGISTERED = {"message": "Se o cadastro for possível, enviamos um e-mail com as instruções."}
+GENERIC = {"message": "Se o e-mail estiver cadastrado, enviaremos as instruções."}
+
 
 def _send_already_registered(user: User, background_tasks: BackgroundTasks) -> None:
     enqueue_email(background_tasks, user.email, "Tentativa de cadastro", _body(
@@ -101,6 +143,9 @@ def _send_already_registered(user: User, background_tasks: BackgroundTasks) -> N
         "Se foi você, entre normalmente ou use \"Esqueci minha senha\" em " + mailer.frontend_url() + "/login",
         "Se não foi você, ignore esta mensagem; nada foi alterado."))
 
+
+# ---------- rotas ----------
+
 @router.post("/register", status_code=201)
 def register(body: RegisterIn, request: Request, background_tasks: BackgroundTasks,
              db: Session = Depends(get_db)):
@@ -108,8 +153,6 @@ def register(body: RegisterIn, request: Request, background_tasks: BackgroundTas
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     email = body.email.lower()
     _email_budget(email, "register")
-    # resposta idêntica para e-mail novo ou já cadastrado (não revela quem tem conta);
-    # o hash é calculado nos dois casos para igualar o tempo de resposta
     password_hash = hash_password(body.password)
     existing = db.scalar(select(User).where(User.email == email))
     if existing is None:
@@ -120,50 +163,81 @@ def register(body: RegisterIn, request: Request, background_tasks: BackgroundTas
     elif existing.email_verified:
         _send_already_registered(existing, background_tasks)
     else:
-        # conta pendente: vale a senha do cadastro mais recente e os links anteriores são invalidados.
-        # Evita que quem cadastrou o e-mail de outra pessoa primeiro fique com a senha da conta.
+        # novo cadastro de conta pendente: nova senha + incrementa versão (invalida links antigos)
         existing.password_hash = password_hash
+        existing.token_version += 1
         db.commit()
         _send_verification(existing, background_tasks)
     return REGISTERED
 
+
 @router.post("/login")
-def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
     email = body.email.lower()
     if not rate.hit(f"login:{_ip(request)}:{email}", 10, 900):
         raise HTTPException(429, "Muitas tentativas. Aguarde alguns minutos.")
     user = db.scalar(select(User).where(User.email == email))
-    # verifica sempre um hash, para o tempo de resposta não revelar se o e-mail existe
     ok = verify_password(user.password_hash if user else DUMMY_HASH, body.password)
     if not (user and ok):
         raise HTTPException(401, "E-mail ou senha incorretos")
     if not user.email_verified:
         raise HTTPException(403, "E-mail ainda não confirmado. Verifique sua caixa de entrada.")
-    return {"access_token": create_token(user.id, password_fingerprint(user.password_hash)),
-            "token_type": "bearer"}
+
+    fp = password_fingerprint(user.password_hash)
+    access = create_token(user.id, fp, ver=user.token_version)
+    refresh = create_refresh_token(user.id, ver=user.token_version)
+    _set_session_cookie(response, access)
+    _set_refresh_cookie(response, refresh)
+    # também devolvemos no corpo para clientes que ainda usam Authorization
+    return {"access_token": access, "token_type": "bearer"}
+
+
+@router.post("/refresh")
+def refresh_token(request: Request, response: Response, db: Session = Depends(get_db)):
+    token = request.cookies.get(REFRESH_COOKIE)
+    if not token:
+        raise HTTPException(401, "Sem refresh token")
+    decoded = decode_refresh_token(token)
+    user = db.get(User, decoded[0]) if decoded else None
+    if user is None or decoded[1] != user.token_version:
+        raise HTTPException(401, "Refresh inválido")
+    fp = password_fingerprint(user.password_hash)
+    access = create_token(user.id, fp, ver=user.token_version)
+    _set_session_cookie(response, access)
+    return {"access_token": access, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=204)
+def logout(response: Response):
+    _clear_cookies(response)
+    return Response(status_code=204)
+
 
 @router.get("/me")
 def me(user: User = Depends(current_user)):
     return {"id": str(user.id), "email": user.email}
 
-GENERIC = {"message": "Se o e-mail estiver cadastrado, enviaremos as instruções."}
 
 @router.post("/verify-email")
 def verify_email(body: VerifyIn, request: Request, db: Session = Depends(get_db)):
-    if not rate.hit(f"verify:{_ip(request)}", 20, 3600):
-        raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     decoded = decode_purpose_token(body.token, VERIFY_EMAIL)
+    # rate limit por usuário quando o token for válido; senão, por IP
+    key = f"verify:user:{decoded[0]}" if decoded else f"verify:ip:{_ip(request)}"
+    if not rate.hit(key, 20, 3600):
+        raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     user = db.get(User, decoded[0]) if decoded else None
-    # o link vale para a senha vigente quando foi enviado: novo cadastro com outra senha invalida o anterior
-    if user is None or decoded[1] != password_fingerprint(user.password_hash):
+    if (user is None
+            or decoded[1] != password_fingerprint(user.password_hash)
+            or decoded[2] != user.token_version):
         raise HTTPException(400, "Link inválido ou expirado")
-    if not user.email_verified:
-        # exige a senha: quem não a escolheu (ex.: cadastrou o e-mail alheio antes) não consegue ativar a conta
-        if not verify_password(user.password_hash, body.password):
-            raise HTTPException(400, "Senha incorreta. Use a senha que você definiu no cadastro.")
-        user.email_verified = True
-        db.commit()
+    if user.email_verified:
+        return {"message": "E-mail confirmado. Você já pode entrar."}
+    if not verify_password(user.password_hash, body.password):
+        raise HTTPException(400, "Senha incorreta. Use a senha que você definiu no cadastro.")
+    user.email_verified = True
+    db.commit()
     return {"message": "E-mail confirmado. Você já pode entrar."}
+
 
 @router.post("/resend-verification", status_code=202)
 def resend_verification(body: EmailIn, request: Request, background_tasks: BackgroundTasks,
@@ -177,6 +251,7 @@ def resend_verification(body: EmailIn, request: Request, background_tasks: Backg
         _send_verification(user, background_tasks)
     return GENERIC
 
+
 @router.post("/forgot-password", status_code=202)
 def forgot_password(body: EmailIn, request: Request, background_tasks: BackgroundTasks,
                     db: Session = Depends(get_db)):
@@ -189,15 +264,19 @@ def forgot_password(body: EmailIn, request: Request, background_tasks: Backgroun
         _send_reset(user, background_tasks)
     return GENERIC
 
+
 @router.post("/reset-password")
 def reset_password(body: ResetIn, request: Request, db: Session = Depends(get_db)):
     if not rate.hit(f"reset:{_ip(request)}", 20, 3600):
         raise HTTPException(429, "Muitas tentativas. Tente mais tarde.")
     decoded = decode_purpose_token(body.token, RESET_PASSWORD)
     user = db.get(User, decoded[0]) if decoded else None
-    if user is None or decoded[1] != password_fingerprint(user.password_hash):
+    if (user is None
+            or decoded[1] != password_fingerprint(user.password_hash)
+            or decoded[2] != user.token_version):
         raise HTTPException(400, "Link inválido ou expirado")
     user.password_hash = hash_password(body.password)
-    user.email_verified = True      # quem recebeu o link controla o e-mail
+    user.email_verified = True
+    user.token_version += 1   # derruba todas as sessões (access e refresh)
     db.commit()
     return {"message": "Senha alterada. Você já pode entrar."}

@@ -3,7 +3,6 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Literal
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
@@ -86,11 +85,6 @@ async def security_headers(request: Request, call_next):
     if PRODUCTION:
         h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()],
-    allow_methods=["*"], allow_headers=["*"], expose_headers=["Content-Disposition"],
-)
 
 @app.get("/health")
 def health():

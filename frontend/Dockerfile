@@ -12,8 +12,8 @@ FROM deps AS build
 COPY . .
 RUN npm run build
 
-# Etapa de serviço: nginx serve os estáticos e encaminha /api ao backend
-FROM nginx:alpine
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+# Etapa de serviço: caddy serve os estáticos e encaminha /api ao backend
+FROM caddy:alpine
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist /srv
+EXPOSE 80 443

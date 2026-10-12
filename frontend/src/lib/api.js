@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API = "/api";   // mesma origem; encaminhada pelo proxy (Vite em dev, reverse proxy em prod)
 const KEY = "bkp_token";
 
 export const getToken = () => localStorage.getItem(KEY);
@@ -14,14 +14,15 @@ function errorMessage(data, status) {
 
 export async function api(path, { method = "GET", body, auth = false } = {}) {
   const headers = {};
-  if (body) headers["Content-Type"] = "application/json";
+  const isForm = body instanceof FormData;   // multipart: o navegador define o Content-Type
+  if (body && !isForm) headers["Content-Type"] = "application/json";
   if (auth) headers["Authorization"] = `Bearer ${getToken()}`;
   let res;
   try {
     res = await fetch(`${API}${path}`, {
       method,
       headers,
-      body: body ? JSON.stringify(body) : undefined,
+      body: isForm ? body : body ? JSON.stringify(body) : undefined,
     });
   } catch {
     throw new Error("Não foi possível conectar à API.");
@@ -33,4 +34,33 @@ export async function api(path, { method = "GET", body, auth = false } = {}) {
     throw err;
   }
   return data;
+}
+
+export async function download(path, { auth = true } = {}) {
+  // Baixa um arquivo (CSV/XLSX) e dispara o salvamento no navegador.
+  const headers = {};
+  if (auth) headers["Authorization"] = `Bearer ${getToken()}`;
+  let res;
+  try {
+    res = await fetch(`${API}${path}`, { headers });
+  } catch {
+    throw new Error("Não foi possível conectar à API.");
+  }
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    const err = new Error(errorMessage(data, res.status));
+    err.status = res.status;
+    throw err;
+  }
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const name = (disposition.match(/filename="?([^";]+)"?/) || [])[1] || "download";
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }

@@ -23,6 +23,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Frontend: login, cadastro, confirmação e recuperação de senha | ✅ Funcionando |
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
+| Sessão em cookie httpOnly + refresh | ✅ Implementado |
 | Fila assíncrona (Celery + Redis) | ⏳ Adiada — e-mail e enriquecimento rodam no processo por ora; a fila volta com o provider real |
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
@@ -40,7 +41,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 - PyJWT + argon2-cffi
 - openpyxl (XLSX)
 - httpx, python-multipart, pydantic-settings, email-validator
-- pytest (49 testes)
+- pytest (50 testes)
 
 **Infraestrutura**
 - Docker + Docker Compose
@@ -214,7 +215,7 @@ Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
 | 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
 | 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
 | 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`), provando que o banco aceita a senha |
-| 6 | `docker compose exec api pytest` | `49 passed` |
+| 6 | `docker compose exec api pytest` | `50 passed` |
 | 7 | Abrir http://localhost:3000 | Tela de login do frontend |
 | 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
 
@@ -367,6 +368,7 @@ DATABASE_URL=postgresql+psycopg://app:troque_esta_senha@db:5432/backup
 # Segurança (mínimo 32 caracteres)
 JWT_SECRET=troque_por_uma_string_aleatoria_com_32_mais_caracteres
 TOKEN_MINUTES=60                     # duração da sessão (padrão 60; opcional)
+REFRESH_DAYS=30                      # validade do refresh token (cookie httpOnly); padrão 30
 
 # Uploads
 MAX_UPLOAD_MB=200
@@ -425,6 +427,10 @@ curl -X POST http://localhost:8000/auth/login \
   -d '{"email":"voce@exemplo.com","password":"senha-bem-longa-123"}'
 TOKEN="..."
 
+> O login também seta um cookie `httpOnly` (`bkp_session`) + `bkp_refresh`. No
+> navegador, o cookie é o mecanismo principal; o `access_token` no corpo é
+> fallback para clientes que ainda usam `Authorization: Bearer`.
+
 # 4. Enviar o ZIP do Takeout
 curl -X POST http://localhost:8000/orders \
   -H "Authorization: Bearer $TOKEN" \
@@ -477,6 +483,8 @@ Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confir
 | POST | `/auth/forgot-password` | Envia link de redefinição de senha |
 | POST | `/auth/reset-password` | Define a nova senha com o token do link |
 | GET | `/auth/me` | Dados do usuário |
+| POST | `/auth/refresh` | Renova o access token a partir do refresh cookie |
+| POST | `/auth/logout` | Invalida os cookies de sessão e refresh |
 | POST | `/orders` | Upload do ZIP |
 | GET | `/orders` | Lista pedidos |
 | GET | `/orders/{id}` | Detalhe do pedido |
@@ -533,7 +541,8 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - ✅ Limite de tentativas de login (rate limit em memória).
 - ✅ Confirmação de e-mail obrigatória para entrar (link válido por 24 h) e exige a senha do cadastro, o que impede o pré-sequestro de conta por quem cadastrou o e-mail alheio.
 - ✅ Link de redefinição de senha válido por 30 min e de uso único.
-- ✅ Trocar a senha derruba as sessões abertas.
+- ✅ Trocar a senha (ou fazer logout) derruba as sessões abertas via `token_version`.
+- ✅ Sessão em cookie httpOnly (`bkp_session`) com refresh token (`bkp_refresh`); `token_version` permite revogação em massa.
 - ✅ Cadastro, reenvio e recuperação não revelam se o e-mail está cadastrado (mesma resposta; quem já tem conta recebe um aviso por e-mail).
 - ✅ Teto de 6 e-mails por hora por destinatário em cada fluxo, independente do IP.
 
@@ -545,7 +554,6 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - ✅ Limite de envios por hora e de pedidos guardados por usuário (`UPLOADS_PER_HOUR`, `MAX_ORDERS_PER_USER`).
 
 **Pendente para produção**
-- ⚠️ Token de sessão em cookie `httpOnly` (hoje fica no `localStorage`).
 - ⚠️ `--proxy-headers` no uvicorn, para o rate limit enxergar o IP real atrás de proxy.
 - ⚠️ Limite de corpo no proxy (`request_body max_size` no `Caddyfile`): corpos *chunked* não trazem `Content-Length`.
 - ⚠️ Rate limit em memória e agendador de retenção são single-instance: mover para Redis/fila ao escalar para várias réplicas.
@@ -570,7 +578,7 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - [ ] Frontend: upload do ZIP, lista de pedidos e downloads
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
-- [ ] Sessão em cookie `httpOnly`, logout e revogação de sessão
+- [x] Sessão em cookie `httpOnly`, logout e revogação de sessão
 - [ ] Cadastro pendente em tabela própria
 - [ ] Página reserva (backup de perfil)
 - [ ] CRM leve

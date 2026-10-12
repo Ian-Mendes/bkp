@@ -85,8 +85,9 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
   não o e-mail).
 - `no-store` em `/auth` e `/orders`; headers de segurança em toda resposta.
 - Isolamento por usuário, rate limit e guardas de ZIP bomb (`importer.py`).
-- Sessão amarrada à senha (fingerprint); tokens de e-mail com propósito não
-  valem como sessão.
+- Sessão em cookie httpOnly (`bkp_session`) + refresh (`bkp_refresh`); `token_version`
+  permite revogação em massa (logout, troca de senha).
+- Tokens de e-mail (verify/reset) não valem como sessão.
 
 ## Playbooks
 
@@ -105,6 +106,8 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
 - Rate limit é em memória (`rate.py`): zera no restart e não é compartilhado
   entre réplicas (single-instance). Idem o agendador de retenção (APScheduler).
 - `PROVIDER` só aceita `null`; `requirements.txt` sem pin.
+- O frontend **não guarda token** no JS: usa cookie httpOnly com `credentials: "include"`.
+  Não reintroduza `localStorage` (`bkp_token`) para sessão.
 
 ## Verifique antes de terminar
 

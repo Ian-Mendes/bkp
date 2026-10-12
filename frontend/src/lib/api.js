@@ -1,9 +1,4 @@
 const API = "/api";   // mesma origem; encaminhada pelo proxy (Vite em dev, reverse proxy em prod)
-const KEY = "bkp_token";
-
-export const getToken = () => localStorage.getItem(KEY);
-export const setToken = (t) => localStorage.setItem(KEY, t);
-export const clearToken = () => localStorage.removeItem(KEY);
 
 function errorMessage(data, status) {
   const d = data && data.detail;
@@ -12,21 +7,28 @@ function errorMessage(data, status) {
   return `Erro ${status}`;
 }
 
-export async function api(path, { method = "GET", body, auth = false } = {}) {
+// A sessão vive em cookie httpOnly; o JS não lê nem escreve.
+// `credentials: "include"` garante que o cookie vá em toda requisição.
+async function request(path, { method = "GET", body } = {}) {
   const headers = {};
   const isForm = body instanceof FormData;   // multipart: o navegador define o Content-Type
   if (body && !isForm) headers["Content-Type"] = "application/json";
-  if (auth) headers["Authorization"] = `Bearer ${getToken()}`;
   let res;
   try {
     res = await fetch(`${API}${path}`, {
       method,
       headers,
+      credentials: "include",
       body: isForm ? body : body ? JSON.stringify(body) : undefined,
     });
   } catch {
     throw new Error("Não foi possível conectar à API.");
   }
+  return res;
+}
+
+export async function api(path, opts = {}) {
+  const res = await request(path, opts);
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     const err = new Error(errorMessage(data, res.status));
@@ -36,16 +38,9 @@ export async function api(path, { method = "GET", body, auth = false } = {}) {
   return data;
 }
 
-export async function download(path, { auth = true } = {}) {
+export async function download(path) {
   // Baixa um arquivo (CSV/XLSX) e dispara o salvamento no navegador.
-  const headers = {};
-  if (auth) headers["Authorization"] = `Bearer ${getToken()}`;
-  let res;
-  try {
-    res = await fetch(`${API}${path}`, { headers });
-  } catch {
-    throw new Error("Não foi possível conectar à API.");
-  }
+  const res = await request(path);
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     const err = new Error(errorMessage(data, res.status));
@@ -63,4 +58,15 @@ export async function download(path, { auth = true } = {}) {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// Tenta renovar o access token usando o refresh (cookie httpOnly).
+// Devolve true se conseguiu; false se o refresh também expirou.
+export async function refreshSession() {
+  const res = await request("/auth/refresh", { method: "POST" });
+  return res.ok;
+}
+
+export async function logout() {
+  await request("/auth/logout", { method: "POST" }).catch(() => {});
 }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, setToken } from "../lib/api";
+import { api } from "../lib/api";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -31,14 +31,14 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      const data = await api(isRegister ? "/auth/register" : "/auth/login", {
+      // O backend seta o cookie httpOnly no login; nada a guardar no JS.
+      await api(isRegister ? "/auth/register" : "/auth/login", {
         method: "POST",
         body: { email, password },
       });
       if (isRegister) {
         setSent(true);
       } else {
-        setToken(data.access_token);
         navigate("/dashboard");
       }
     } catch (err) {

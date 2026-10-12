@@ -24,6 +24,8 @@ real ainda é um stub (`NullProvider`); sem fila (Celery/Redis) no MVP.
 ## Limites operacionais
 
 - Nunca commite `.env`; nunca peça nem guarde a senha do Instagram.
+- Arquivos de rotina, rascunhos, planos e documentação avulsa vão em `tmp/`
+  (pasta gitignored) — nunca no repositório.
 - Nunca rode `pytest`/`pip`/`npm` direto na máquina — sempre em container
   (`docker compose exec`).
 - **Exceção temporária:** o código comentado de Celery/Redis em

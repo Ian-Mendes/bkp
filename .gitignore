@@ -26,3 +26,7 @@ dados_insta_exportados_json.zip
 
 # Docker
 pgdata/
+
+# TMP — rascunhos, planos e arquivos de rotina (não versionados)
+tmp/*
+!tmp/.gitkeep

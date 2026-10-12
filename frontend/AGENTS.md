@@ -10,7 +10,8 @@ de estado, UI kit ou testes. Node 20; dev na porta 3000.
 ## Regras de ouro
 
 - Comentários/docs em pt-BR; identificadores em inglês. Textos de UI em pt-BR.
-- Auth de rota: `getToken()` + `useNavigate` (padrão em `src/pages/Dashboard.jsx`).
+- Auth de rota: chame `GET /auth/me`; em 401, tente `refreshSession()` antes de
+  redirecionar (padrão em `src/pages/Dashboard.jsx`).
 - Nunca fixe a origem da API — use `lib/api.js` com `/api` (mesma origem).
 - Código enxuto; funções curtas; sem CSS-in-JS.
 
@@ -24,10 +25,13 @@ de estado, UI kit ou testes. Node 20; dev na porta 3000.
 
 ## API (`src/lib/api.js`)
 
-- `api(path, { method, body, auth })` envia JSON e lança `Error` com `.status`.
+- `api(path, { method, body })` envia JSON e lança `Error` com `.status`.
 - `download(path)` baixa arquivo (CSV/XLSX) e dispara o salvamento.
-- Token em `localStorage`, chave `bkp_token`. Base fixa `/api`, encaminhada pelo
-  proxy (Vite em dev, Caddy em prod) — sem CORS.
+- `logout()` chama `POST /auth/logout`; `refreshSession()` chama `POST /auth/refresh`.
+- Sessão em cookie httpOnly (`bkp_session`) com `credentials: "include"`. Sem
+  token no JS.
+- Base fixa `/api`, encaminhada pelo proxy (Vite em dev, Caddy em prod) — sem CORS.
+
 
 ## Comandos
 
@@ -49,8 +53,8 @@ npm run preview   # serve a build localmente
 ## Pendências
 
 - Upload de ZIP (`POST /orders`, multipart); lista/detalhe/start/delete de
-  pedidos; downloads (`/report`, `/export.csv`, `/export.xlsx`); substituir o
-  placeholder `src/pages/Dashboard.jsx`.
+  pedidos; downloads (`/report`, `/export.csv`, `/export.xlsx`).
+
 
 ## Pronto quando
 

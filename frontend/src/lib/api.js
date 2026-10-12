@@ -9,7 +9,7 @@ function errorMessage(data, status) {
 
 // A sessão vive em cookie httpOnly; o JS não lê nem escreve.
 // `credentials: "include"` garante que o cookie vá em toda requisição.
-async function request(path, { method = "GET", body, auth = false } = {}) {
+async function request(path, { method = "GET", body } = {}) {
   const headers = {};
   const isForm = body instanceof FormData;   // multipart: o navegador define o Content-Type
   if (body && !isForm) headers["Content-Type"] = "application/json";

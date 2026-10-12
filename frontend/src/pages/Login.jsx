@@ -1,11 +1,9 @@
-"use client";
 import { useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { api, setToken } from "../../lib/api";
+import { Link, useNavigate } from "react-router-dom";
+import { api, setToken } from "../lib/api";
 
 export default function Login() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [mode, setMode] = useState("login"); // login | register
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -41,7 +39,7 @@ export default function Login() {
         setSent(true);
       } else {
         setToken(data.access_token);
-        router.push("/dashboard");
+        navigate("/dashboard");
       }
     } catch (err) {
       setError(err.message);
@@ -132,7 +130,7 @@ export default function Login() {
 
         {!isRegister && (
           <p className="switch">
-            <Link href="/forgot-password">Esqueci minha senha</Link>
+            <Link to="/forgot-password">Esqueci minha senha</Link>
           </p>
         )}
 

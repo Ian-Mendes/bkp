@@ -1,8 +1,7 @@
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 const KEY = "bkp_token";
 
-export const getToken = () =>
-  typeof window === "undefined" ? null : localStorage.getItem(KEY);
+export const getToken = () => localStorage.getItem(KEY);
 export const setToken = (t) => localStorage.setItem(KEY, t);
 export const clearToken = () => localStorage.removeItem(KEY);
 

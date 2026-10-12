@@ -1,7 +1,6 @@
-"use client";
 import { useState } from "react";
-import Link from "next/link";
-import { api } from "../../lib/api";
+import { Link } from "react-router-dom";
+import { api } from "../lib/api";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -33,7 +32,7 @@ export default function ForgotPassword() {
               Se o e-mail estiver cadastrado, enviamos um link para definir uma
               nova senha. Ele vale por 30 minutos.
             </p>
-            <p className="switch"><Link href="/login">Voltar para o login</Link></p>
+            <p className="switch"><Link to="/login">Voltar para o login</Link></p>
           </>
         ) : (
           <>
@@ -45,7 +44,7 @@ export default function ForgotPassword() {
             <button type="submit" disabled={loading}>
               {loading ? "Aguarde..." : "Enviar link"}
             </button>
-            <p className="switch"><Link href="/login">Voltar para o login</Link></p>
+            <p className="switch"><Link to="/login">Voltar para o login</Link></p>
           </>
         )}
       </form>

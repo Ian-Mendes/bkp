@@ -1,0 +1,15 @@
+# Override de desenvolvimento: servidor do Vite com hot reload.
+# Produção: `docker compose -f docker-compose.yml --profile prod up -d --build`.
+services:
+  api:
+    ports: ["127.0.0.1:8000:8000"]   # curl direto em dev
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [api]

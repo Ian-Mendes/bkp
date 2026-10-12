@@ -3,15 +3,16 @@ from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Literal
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
+from apscheduler.schedulers.background import BackgroundScheduler
 from .auth import router as auth_router, current_user
 from .db import Base, engine, get_db
 from .models import Order, Profile, User
 from .importer import ExportError
-from .services import create_order_from_zip, delete_orders, retention_days
+from .services import (create_order_from_zip, delete_orders, retention_days,
+                       run_enrichment, purge_expired_orders)
 from . import exporter, rate
 
 UPLOAD_DIR = "/data/uploads"
@@ -33,7 +34,14 @@ async def lifespan(app):
             # contas novas nascem não confirmadas (mesmo default de um banco criado do zero)
             conn.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
-    yield
+    scheduler = BackgroundScheduler()
+    # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)
+    scheduler.add_job(purge_expired_orders, "interval", hours=24)
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
 app = FastAPI(
     title="Backup enriquecido", lifespan=lifespan,
@@ -77,11 +85,6 @@ async def security_headers(request: Request, call_next):
     if PRODUCTION:
         h["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",") if o.strip()],
-    allow_methods=["*"], allow_headers=["*"], expose_headers=["Content-Disposition"],
-)
 
 @app.get("/health")
 def health():
@@ -154,14 +157,11 @@ def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Sessi
 
 @app.post("/orders/{order_id}/start")
 def start_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    from .worker import process_order
     order = _get_order(db, order_id, user)
     if order.status not in ("parsed", "failed"):
         raise HTTPException(409, f"Pedido em estado '{order.status}'")
-    order.status = "queued"
-    db.commit()
-    process_order.delay(str(order.id))
-    return {"order_id": str(order.id), "status": "queued"}
+    status = run_enrichment(str(order.id))
+    return {"order_id": str(order.id), "status": status}
 
 @app.delete("/orders/{order_id}", status_code=204)
 def delete_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):

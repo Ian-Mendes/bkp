@@ -2,7 +2,8 @@ fastapi
 uvicorn[standard]
 sqlalchemy
 psycopg[binary]
-celery[redis]
+# celery[redis]  # reativar ao reintroduzir a fila (provider real de enriquecimento)
+apscheduler
 python-multipart
 pydantic-settings
 openpyxl

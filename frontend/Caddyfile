@@ -1,0 +1,22 @@
+# Produção: troque :80 pelo domínio (ex.: backup.exemplo.com) para ativar TLS automático.
+:80 {
+    root * /srv
+
+    # API: /api/... -> http://api:8000/... (remove o prefixo /api; o backend define a CSP estrita)
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    # SPA: estáticos com fallback e CSP relaxada + headers de segurança
+    handle {
+        header {
+            X-Content-Type-Options nosniff
+            X-Frame-Options DENY
+            Referrer-Policy no-referrer
+            Permissions-Policy "camera=(), microphone=(), geolocation=()"
+            Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        }
+        try_files {path} /index.html
+        file_server
+    }
+}

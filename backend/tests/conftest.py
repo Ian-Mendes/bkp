@@ -3,14 +3,15 @@ import os
 # Variáveis de ambiente para testes (executados fora do Docker)
 os.environ.setdefault("JWT_SECRET", "segredo-de-teste-apenas-para-pytest-0123456789")
 os.environ.setdefault("DATABASE_URL", "sqlite://")   # <-- ADICIONADO
-os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")  # <-- ADICIONADO
+# REDIS_URL era necessário p/ importar o worker (Celery); reativar ao reintroduzir a fila
+# os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app import main, worker, rate, auth
+from app import main, rate, auth, services
 from tests.helpers import OUTBOX
 
 REAL_ENQUEUE = auth.enqueue_email   # a fixture abaixo troca por um fake; os testes de fila usam o real
@@ -29,7 +30,7 @@ def fake_rate(monkeypatch):
 def fake_email(monkeypatch):
     OUTBOX.clear()
     monkeypatch.setattr(auth, "enqueue_email",
-                        lambda to, subject, text: OUTBOX.append((to, subject, text)))
+                        lambda bg, to, subject, text: OUTBOX.append((to, subject, text)))
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
@@ -47,6 +48,6 @@ def env(tmp_path, monkeypatch):
 
     app.dependency_overrides[get_db] = override
     monkeypatch.setattr(main, "UPLOAD_DIR", str(tmp_path / "uploads"))
-    monkeypatch.setattr(worker, "SessionLocal", Session)
+    monkeypatch.setattr(services, "SessionLocal", Session)
     yield TestClient(app), Session, tmp_path
     app.dependency_overrides.clear()

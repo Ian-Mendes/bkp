@@ -1,28 +1,27 @@
-"use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { api, getToken, clearToken } from "../../lib/api";
+import { useNavigate } from "react-router-dom";
+import { api, getToken, clearToken } from "../lib/api";
 
 export default function Dashboard() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const [user, setUser] = useState(null);
 
   useEffect(() => {
     if (!getToken()) {
-      router.replace("/login");
+      navigate("/login", { replace: true });
       return;
     }
     api("/auth/me", { auth: true })
       .then(setUser)
       .catch(() => {
         clearToken();
-        router.replace("/login");
+        navigate("/login", { replace: true });
       });
-  }, [router]);
+  }, [navigate]);
 
   function logout() {
     clearToken();
-    router.replace("/login");
+    navigate("/login", { replace: true });
   }
 
   if (!user) return null;

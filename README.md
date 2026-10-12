@@ -23,7 +23,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Frontend: login, cadastro, confirmação e recuperação de senha | ✅ Funcionando |
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
-| Fila assíncrona (Celery + Redis) | ✅ Pronto |
+| Fila assíncrona (Celery + Redis) | ⏳ Adiada — e-mail e enriquecimento rodam no processo por ora; a fila volta com o provider real |
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
 | Frontend: upload, pedidos e downloads | ⏳ Não iniciado |
@@ -36,19 +36,20 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 - Python 3.12
 - FastAPI + Uvicorn
 - SQLAlchemy + PostgreSQL 16
-- Celery + Redis 7
+- APScheduler (retenção)
 - PyJWT + argon2-cffi
 - openpyxl (XLSX)
 - httpx, python-multipart, pydantic-settings, email-validator
-- pytest (52 testes)
+- pytest (49 testes)
 
 **Infraestrutura**
 - Docker + Docker Compose
 - Armazenamento privado de arquivos (volume local; S3 na produção)
 - Mailpit (SMTP de desenvolvimento, captura os e-mails)
+- Caddy (gateway de produção, perfil `prod`; em dev o Vite serve o frontend)
 
 **Frontend**
-- Next.js 14 (App Router, JavaScript)
+- Vite 5 + React 18 (react-router-dom, JavaScript)
 
 ---
 
@@ -57,38 +58,45 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 ```
 bkp/
 ├── README.md
-├── docker-compose.yml
+├── CONTRIBUTING.md
+├── docker-compose.yml          # db, mailpit, api (+ perfil prod com Caddy)
+├── docker-compose.override.yml # dev: sobe o frontend (Vite) com hot reload
 ├── .env.example
+├── .github/
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── ISSUE_TEMPLATE/
 ├── frontend/
-│   ├── Dockerfile
-│   ├── next.config.js         # Cabeçalhos de segurança (CSP etc.)
-│   ├── lib/api.js             # Cliente da API + token
-│   └── app/
-│       ├── login/             # Entrar / cadastrar
-│       ├── verify-email/      # Confirmação de e-mail
-│       ├── forgot-password/   # Pedir link de redefinição
-│       ├── reset-password/    # Definir nova senha
-│       └── dashboard/         # Área logada (provisória)
+│   ├── Dockerfile              # multi-stage: deps → dev → build → caddy
+│   ├── Caddyfile               # gateway de produção (estáticos + proxy /api)
+│   ├── vite.config.js          # proxy de /api em dev
+│   ├── index.html
+│   └── src/
+│       ├── main.jsx            # entrypoint
+│       ├── App.jsx             # rotas (react-router)
+│       ├── index.css
+│       ├── lib/api.js          # cliente da API + token
+│       └── pages/              # Home, Login, VerifyEmail, ForgotPassword,
+│                               # ResetPassword, Dashboard (provisória)
 └── backend/
     ├── Dockerfile
     ├── requirements.txt
     ├── app/
-    │   ├── main.py            # API FastAPI
-    │   ├── worker.py          # Tarefas Celery
-    │   ├── importer.py        # Parser do Takeout (JSON + HTML)
-    │   ├── services.py        # Regras de negócio
-    │   ├── exporter.py        # CSV/XLSX
-    │   ├── models.py          # SQLAlchemy
-    │   ├── auth.py            # Cadastro, login, confirmação de e-mail, recuperação de senha
-    │   ├── security.py        # Hash + JWT (sessão e tokens de e-mail)
-    │   ├── mailer.py          # Envio SMTP
-    │   ├── rate.py            # Rate limiting
-    │   └── providers/         # Fontes de enriquecimento
+    │   ├── main.py             # API FastAPI + agendador de retenção (APScheduler)
+    │   ├── worker.py           # stub comentado (fila reintroduzida depois)
+    │   ├── importer.py         # Parser do Takeout (JSON + HTML) + ZIP bomb
+    │   ├── services.py         # Regras de negócio (enriquecimento síncrono)
+    │   ├── exporter.py         # CSV/XLSX + anti-injeção
+    │   ├── models.py           # SQLAlchemy
+    │   ├── auth.py             # Cadastro, login, confirmação de e-mail, recuperação de senha
+    │   ├── security.py         # Hash + JWT (sessão e tokens de e-mail)
+    │   ├── mailer.py           # Envio SMTP
+    │   ├── rate.py             # Rate limiting (em memória)
+    │   └── providers/          # Fontes de enriquecimento
     │       ├── base.py
     │       ├── null_provider.py
     │       └── (futuro) apify_provider.py
-    ├── tests/                 # pytest (API, auth, e-mail, segurança, importer)
-    └── tools/                 # Scripts de análise e debug (count_files, dates)
+    ├── tests/                  # pytest (API, auth, e-mail, segurança, importer)
+    └── tools/                  # Scripts de análise e debug (count_files, dates)
 ```
 
 ---
@@ -193,18 +201,20 @@ docker compose up -d --build
 O primeiro build leva alguns minutos (baixa imagens e instala dependências).
 O `-d` roda em segundo plano: pode fechar o terminal que os containers continuam de pé.
 
+> Atalho: `make dev` equivale a `docker compose up -d --build` (e cria o `.env` se faltar).
+
 ### 5. Validar que está tudo certo
 
 Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
 
 | # | Comando | Resultado esperado |
 |---|---------|--------------------|
-| 1 | `docker compose ps` | 7 serviços `Up` (`api`, `worker`, `beat`, `db`, `redis`, `mailpit`, `frontend`); `db` e `mailpit` com `(healthy)` |
+| 1 | `docker compose ps` | 4 serviços `Up` (`api`, `db`, `mailpit`, `frontend`); `db` e `mailpit` com `(healthy)` |
 | 2 | `docker compose logs api --tail 20` | Termina com `Application startup complete` e **sem** traceback |
 | 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
 | 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
 | 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`), provando que o banco aceita a senha |
-| 6 | `docker compose exec api pytest` | `52 passed` |
+| 6 | `docker compose exec api pytest` | `49 passed` |
 | 7 | Abrir http://localhost:3000 | Tela de login do frontend |
 | 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
 
@@ -239,11 +249,10 @@ Procure pelo sintoma. Quando não souber a causa, o primeiro passo é sempre
 | `permission denied ... docker.sock` | Usuário fora do grupo `docker` | Use `sudo` ou veja o passo 2 |
 | `db` sai com código 1; `dependency failed to start`; `service "api" is not running` | `POSTGRES_PASSWORD` vazio. O log do `db` diz `Database is uninitialized and superuser password is not specified` | Preencha o `.env` (passo 3), depois `docker compose down -v && docker compose up -d` |
 | `curl` responde `Recv failure: Conexão fechada pela outra ponta`; `api` aparece `Up` | O app falhou ao iniciar e o uvicorn ficou de pé sem aplicação. Veja o traceback em `docker compose logs api` | Corrija o erro apontado no log (as duas linhas abaixo são as mais comuns) |
-| `RuntimeError: JWT_SECRET precisa ter pelo menos 32 caracteres` | `JWT_SECRET` vazio ou curto | Preencha com `openssl rand -hex 32` e rode `docker compose up -d --force-recreate api worker beat` |
+| `RuntimeError: JWT_SECRET precisa ter pelo menos 32 caracteres` | `JWT_SECRET` vazio ou curto | Preencha com `openssl rand -hex 32` e rode `docker compose up -d --force-recreate api` |
 | `password authentication failed for user "app"` | Senha da `DATABASE_URL` diferente da gravada no volume do Postgres | Deixe as duas senhas iguais no `.env` e recrie o banco: `docker compose down -v && docker compose up -d` (**apaga os dados do banco**) |
 | `Bind for 127.0.0.1:8025 failed: port is already allocated` (ou 3000/8000) | Outra coisa usa a porta, quase sempre containers de outra cópia do projeto | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` para achar o dono; remova com `docker rm -f NOME`, ou na outra pasta rode `docker compose down`. Se não for Docker: `sudo ss -ltnp \| grep 8025` |
 | Mudei o `.env` e nada mudou | `restart` não relê o `.env` | `docker compose up -d --force-recreate` |
-| Mudei o código do `worker`/`beat` e nada mudou | Eles não têm hot reload | `docker compose restart worker beat` |
 | Mudei `requirements.txt` ou `package.json` | Imagem precisa ser reconstruída | `docker compose up -d --build` |
 | Erro de `column ... does not exist` após atualizar | Não há migrações ainda (`create_all` + `ALTER` pontual) e o banco antigo ficou sem a coluna nova | Em desenvolvimento: `docker compose down -v && docker compose up -d` (apaga os dados) |
 
@@ -297,6 +306,24 @@ E garanta que o Docker inicia com o sistema (Linux): `sudo systemctl enable dock
 
 ---
 
+## Makefile
+
+Atalhos para os comandos mais comuns (tudo em container; nunca `pytest`/`pip`/`npm` na máquina):
+
+| Comando | Efeito |
+|---------|--------|
+| `make setup` | Cria o `.env` a partir do `.env.example` (não sobrescreve) e avisa se `JWT_SECRET` está curto |
+| `make dev` | `docker compose up -d --build` (cria o `.env` se faltar) |
+| `make build` | `docker compose build` |
+| `make test` | `docker compose exec api pytest` |
+| `make prod` | `docker compose -f docker-compose.yml --profile prod up -d --build` (gateway Caddy) |
+| `make prod-down` | `docker compose -f docker-compose.yml --profile prod down` |
+| `make down` | `docker compose down` |
+| `make reset` | `docker compose down -v && docker compose up -d --build` |
+| `make logs` | `docker compose logs -f` |
+
+---
+
 ## Resetar os Dados
 
 ```bash
@@ -306,9 +333,9 @@ docker compose down -v && docker compose up -d
 # Só usuários, pedidos e perfis
 docker compose exec db psql -U app -d backup -c "TRUNCATE users, orders, profiles RESTART IDENTITY CASCADE;"
 
-# Zerar limites de tentativas (rate limit) e fila
-# (se o Redis tiver senha: redis-cli -a "$REDIS_PASSWORD" FLUSHALL)
-docker compose exec redis redis-cli FLUSHALL
+# Zerar limites de tentativas (rate limit): o contador é em memória,
+# então basta reiniciar a API
+docker compose restart api
 ```
 
 ---
@@ -320,7 +347,7 @@ o Mailpit em http://localhost:8025 para clicar no link recebido.
 
 - **Confirmação:** o link abre `/verify-email`, que pede a **senha do cadastro** para ativar a conta.
 - **Recuperação:** em "Esqueci minha senha" informe o e-mail; o link do Mailpit vale 30 min e só funciona uma vez.
-- **Não chegou e-mail?** Veja `docker compose logs worker --tail 30` (tarefa `send_email`).
+- **Não chegou e-mail?** Veja `docker compose logs api --tail 30` (o envio roda em `BackgroundTasks`, depois da resposta).
 - Cada fluxo (cadastro, reenvio, recuperação) envia no máximo 6 e-mails por hora para o mesmo endereço.
 - O login só funciona depois de confirmar o e-mail.
 
@@ -333,9 +360,9 @@ o Mailpit em http://localhost:8025 para clicar no link recebido.
 POSTGRES_PASSWORD=troque_esta_senha
 DATABASE_URL=postgresql+psycopg://app:troque_esta_senha@db:5432/backup
 
-# Fila
-REDIS_URL=redis://redis:6379/0       # com senha: redis://:SENHA@redis:6379/0
-REDIS_PASSWORD=                      # opcional em dev; use em produção (igual à do REDIS_URL)
+# Fila (reservado; reintroduzir ao reativar Celery/Redis com o provider real)
+# REDIS_URL=redis://redis:6379/0
+# REDIS_PASSWORD=
 
 # Segurança (mínimo 32 caracteres)
 JWT_SECRET=troque_por_uma_string_aleatoria_com_32_mais_caracteres
@@ -347,9 +374,6 @@ KEEP_UPLOADS=0
 
 # Retenção (dias)
 RETENTION_DAYS=30
-
-# CORS
-CORS_ORIGINS=http://localhost:3000
 
 # Provider de enriquecimento
 PROVIDER=null          # null | apify
@@ -374,7 +398,8 @@ MAX_ORDERS_PER_USER=20     # pedidos guardados por usuário
 
 Os valores de e-mail e de segurança têm padrão no código (Mailpit, desenvolvimento); só precisam estar no `.env` para mudar.
 
-O frontend lê `NEXT_PUBLIC_API_URL` (padrão `http://localhost:8000`); ver `frontend/.env.example`.
+O frontend chama a API pela mesma origem (`/api`), encaminhada pelo proxy
+(Vite em dev, Caddy em produção) — sem variável a configurar; ver `frontend/.env.example`.
 
 **Nunca comite o `.env` real** (confira se ele está no `.gitignore`). Use `.env.example` como modelo
 e gere um `JWT_SECRET` e uma senha de banco diferentes para cada ambiente, principalmente produção.
@@ -505,7 +530,7 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 
 **Contas e sessões**
 - ✅ Hash de senha com Argon2id.
-- ✅ Limite de tentativas de login (rate limit via Redis).
+- ✅ Limite de tentativas de login (rate limit em memória).
 - ✅ Confirmação de e-mail obrigatória para entrar (link válido por 24 h) e exige a senha do cadastro, o que impede o pré-sequestro de conta por quem cadastrou o e-mail alheio.
 - ✅ Link de redefinição de senha válido por 30 min e de uso único.
 - ✅ Trocar a senha derruba as sessões abertas.
@@ -522,8 +547,9 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 **Pendente para produção**
 - ⚠️ Token de sessão em cookie `httpOnly` (hoje fica no `localStorage`).
 - ⚠️ `--proxy-headers` no uvicorn, para o rate limit enxergar o IP real atrás de proxy.
-- ⚠️ Limite de corpo no proxy (`client_max_body_size`): corpos *chunked* não trazem `Content-Length`.
-- ⚠️ Senha no Redis (`REDIS_PASSWORD` + `REDIS_URL`), versões fixas das dependências e frontend com build de produção.
+- ⚠️ Limite de corpo no proxy (`request_body max_size` no `Caddyfile`): corpos *chunked* não trazem `Content-Length`.
+- ⚠️ Rate limit em memória e agendador de retenção são single-instance: mover para Redis/fila ao escalar para várias réplicas.
+- ⚠️ Versões fixas das dependências (`requirements.txt` sem pin).
 - ⚠️ Cadastro pendente pode ser sobrescrito por terceiros (só atrapalha, não dá acesso); o desenho definitivo guarda o pendente em tabela própria.
 
 > O envio de uma exportação pelo cliente **não concede automaticamente**
@@ -536,11 +562,11 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 
 - [x] Parser JSON + HTML
 - [x] Autenticação e isolamento
-- [x] Fila assíncrona
 - [x] Exportação CSV/XLSX
 - [x] Confirmação de e-mail e recuperação de senha
 - [x] Frontend: login, cadastro e recuperação de senha
 - [ ] **Integração com provedor de enriquecimento (Apify ou similar)**
+- [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
 - [ ] Frontend: upload do ZIP, lista de pedidos e downloads
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
@@ -549,15 +575,13 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - [ ] Página reserva (backup de perfil)
 - [ ] CRM leve
 - [ ] Agentes de IA para classificação de bios
+- [ ] Definir a `LICENSE` (hoje o repositório não declara nenhuma)
 
 ---
 
 ## Como Contribuir
 
-1. Crie uma branch: `git checkout -b feat/nome-da-feature`
-2. Commits pequenos e descritivos.
-3. Rode os testes antes de abrir PR: `docker compose exec api pytest`
-4. Abra PR explicando **o quê** e **por quê**.
+Veja `CONTRIBUTING.md`.
 
 ---
 

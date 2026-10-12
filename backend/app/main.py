@@ -33,6 +33,9 @@ async def lifespan(app):
                               "email_verified BOOLEAN NOT NULL DEFAULT TRUE"))
             # contas novas nascem não confirmadas (mesmo default de um banco criado do zero)
             conn.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
+            # NOVO: token_version para revogação em massa (logout/troca de senha)
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                              "token_version INTEGER NOT NULL DEFAULT 0"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     scheduler = BackgroundScheduler()
     # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)

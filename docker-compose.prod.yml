@@ -1,0 +1,16 @@
+# Produção: usa as imagens publicadas no GHCR (não builda no servidor) e remove
+# as conveniências de dev (uvicorn --reload e bind mount do código).
+# Requer Docker Compose v2.26+ (suporte ao !override/!reset).
+# Uso: docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+# IMAGE_TAG define qual tag implantar (padrão: main). Ex.: IMAGE_TAG=<sha> ... para rollback.
+services:
+  api:
+    build: !reset null
+    image: ghcr.io/ian-mendes/bkp/api:${IMAGE_TAG:-main}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes: !override
+      - uploads:/data/uploads
+
+  web:
+    build: !reset null
+    image: ghcr.io/ian-mendes/bkp/web:${IMAGE_TAG:-main}

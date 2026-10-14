@@ -1,5 +1,7 @@
 # BKP — SaaS de Backup Enriquecido do Instagram
 
+[![CI](https://github.com/Ian-Mendes/bkp/actions/workflows/ci.yml/badge.svg)](https://github.com/Ian-Mendes/bkp/actions/workflows/ci.yml)
+
 Plataforma que recebe o arquivo de exportação (Takeout) do Instagram,
 extrai a rede de seguidores/seguindo do titular, enriquece cada perfil
 com dados públicos (seguidores, seguindo, bio) e entrega uma planilha
@@ -566,6 +568,103 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 
 ---
 
+## Deploy e Produção
+
+Provedor definido: **Vultr** (VPS). O servidor ainda não foi provisionado; abaixo,
+o que já existe e o que falta para subir em staging/produção.
+
+### Topologia planejada (Vultr)
+
+- **Um VPS (Cloud Compute)** rodando o Docker Compose com `db` + `api` + `web`
+  (Caddy). Uma réplica só, por causa do rate limit e do agendador em memória.
+- **Uploads**: volume local no VPS por ora; a intenção é migrar para o
+  **Vultr Object Storage** (S3-compatível) — as variáveis `S3_*` no `.env.example`
+  já reservam isso (endpoint `https://<região>.vultrobjects.com`).
+- **Domínio + HTTPS**: aponte o DNS do domínio ao IP do VPS e deixe o Caddy
+  emitir o certificado (TLS automático).
+
+### O que já está pronto
+
+- **Perfil `prod`**: `docker-compose.prod.yml` usa as imagens do GHCR (sem build
+  no servidor) e sobe o Caddy como gateway único em `:80`/`:443`.
+- **CI e imagens**: todo PR roda os testes (backend) e o build (frontend) via
+  GitHub Actions; a branch `main` publica as imagens em
+  `ghcr.io/ian-mendes/bkp/api` e `ghcr.io/ian-mendes/bkp/web`.
+- **CD**: `deploy.yml` faz SSH no VPS, puxa as imagens, sobe e valida o
+  `/health` (inerte até os secrets existirem).
+- **Healthcheck**: `GET /health` retorna `200 {"status":"ok"}`.
+
+### Requisitos de produção (obrigatórios)
+
+- **HTTPS obrigatório**: com `APP_ENV=production` o cookie de sessão usa
+  `secure=True` e a API ativa HSTS. No `Caddyfile`, troque `:80` pelo domínio
+  real (ex.: `backup.exemplo.com`) para ativar o TLS automático do Caddy.
+- **Segredos por ambiente**: gere `JWT_SECRET` e `POSTGRES_PASSWORD` distintos
+  para cada ambiente (nunca reuse o de desenvolvimento). Configure um SMTP real
+  (SPF/DKIM) e `FRONTEND_URL` com o domínio público.
+- **Uma réplica só (por ora)**: o rate limit (`rate.py`) e o agendador de
+  retenção (APScheduler) são em memória/single-instance. Não escale para mais de
+  uma réplica até a fila Redis voltar (Issue #11).
+
+### Deploy (CD via GitHub Actions)
+
+O workflow `deploy.yml` faz o deploy contínuo por SSH, puxando as imagens do
+GHCR. Roda automaticamente quando o `release.yml` termina na `main` e também
+aceita execução manual ("Actions" → "Deploy" → "Run workflow"), com um campo
+`ref` para escolher a tag — use o `sha` de um commit anterior para **rollback**.
+
+**Secrets do GitHub** (Settings → Secrets and variables → Actions):
+
+| Secret | O que é |
+|--------|---------|
+| `DEPLOY_HOST` | IP/domínio do VPS |
+| `DEPLOY_USER` | usuário SSH (ex.: `root`) |
+| `SSH_PRIVATE_KEY` | chave privada SSH (a pública fica em `~/.ssh/authorized_keys` do VPS) |
+| `DEPLOY_PATH` | diretório do projeto no servidor (ex.: `/opt/bkp`) |
+
+Enquanto esses secrets não existirem, o job fica **inerte** (o passo é pulado).
+
+**Preparação única no VPS:**
+
+1. `docker login ghcr.io -u SEU_USUARIO -p SEU_PAT` — o PAT precisa de
+   `read:packages` para `ghcr.io/ian-mendes/bkp/*` (ou torne o pacote público).
+2. Clone o repositório em `DEPLOY_PATH` e crie o `.env` de produção
+   (`APP_ENV=production`, `JWT_SECRET` e `POSTGRES_PASSWORD` próprios, SMTP real,
+   `FRONTEND_URL` com o domínio).
+3. Aponte o DNS do domínio ao IP do VPS e ajuste o `Caddyfile` para o domínio.
+
+**Deploy manual (sem GitHub Actions):**
+
+```bash
+git pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+```
+
+**Validação e rollback:**
+
+```bash
+# healthcheck (a API não publica porta em prod; consulta por dentro do container)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod exec -T api python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+# rollback: implante a tag do commit anterior
+IMAGE_TAG=<sha-anterior> docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+```
+
+O `docker-compose.prod.yml` usa as imagens publicadas (`ghcr.io/ian-mendes/bkp/*`)
+e remove o `--reload`/bind mount de dev. Requer Docker Compose v2.26+.
+
+### Backup do banco
+
+```bash
+scripts/backup.sh 30 ./backups   # pg_dump comprimido; remove backups com +30 dias
+```
+
+Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
+`RETENTION_DAYS` do produto (30 dias), em linha com a LGPD.
+
+---
+
 ## Roadmap
 
 - [x] Parser JSON + HTML
@@ -578,6 +677,8 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - [ ] Frontend: upload do ZIP, lista de pedidos e downloads
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
+- [x] CI (GitHub Actions) e publicação de imagens (GHCR)
+- [ ] Deploy em staging/produção (provedor: Vultr; aguardando provisionamento do servidor)
 - [x] Sessão em cookie `httpOnly`, logout e revogação de sessão
 - [ ] Cadastro pendente em tabela própria
 - [ ] Página reserva (backup de perfil)

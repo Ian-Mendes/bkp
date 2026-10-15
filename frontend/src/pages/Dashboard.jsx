@@ -18,6 +18,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [order, setOrder] = useState(null);
   const input = useRef(null);
@@ -95,8 +96,19 @@ export default function Dashboard() {
   }
 
   async function logout() {
-    await apiLogout();
-    navigate("/login", { replace: true });
+    if (pending.current) return;
+    pending.current = true;
+    setLoggingOut(true);
+    setError("");
+    try {
+      await apiLogout();
+      navigate("/login", { replace: true });
+    } catch {
+      setError("Não foi possível encerrar sua sessão. Tente sair novamente.");
+    } finally {
+      pending.current = false;
+      setLoggingOut(false);
+    }
   }
 
   return (
@@ -116,7 +128,7 @@ export default function Dashboard() {
           <p>O BKP nunca solicita login, senha ou código de acesso do Instagram. O MVP organiza os dados exportados; o enriquecimento real ainda não está disponível.</p>
         </details>
         <form onSubmit={submit} aria-busy={busy}>
-          <fieldset disabled={busy || !maxBytes || expired} className="upload-fields">
+          <fieldset disabled={busy || loggingOut || !maxBytes || expired} className="upload-fields">
             <legend>Arquivo da exportação</legend>
             <div className={`upload-drop${dragging ? " is-dragging" : ""}`}
               onDragOver={(event) => { event.preventDefault(); if (!pending.current) setDragging(true); }}
@@ -147,7 +159,7 @@ export default function Dashboard() {
           {order.warnings?.length > 0 && <p>A análise apontou possíveis lacunas na exportação. Confira se você incluiu seguidores e seguindo de todo o período.</p>}
         </section>}
         {user && <div className="dashboard-actions">
-          <button id="out" className="out" disabled={busy} onClick={logout}>Sair</button>
+          <button id="out" className="out" disabled={busy || loggingOut} onClick={logout}>{loggingOut ? "Saindo…" : "Sair"}</button>
         </div>}
       </div>
     </main>

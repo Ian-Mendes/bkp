@@ -38,6 +38,9 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     username: Mapped[str] = mapped_column(String(30))
+    # relação com o dono do pedido, vinda do Takeout (seguidor/eu sigo); sempre conhecida
+    is_follower: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
+    is_following: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     followers_count: Mapped[int | None] = mapped_column(Integer)
     following_count: Mapped[int | None] = mapped_column(Integer)
     bio: Mapped[str | None] = mapped_column(Text)

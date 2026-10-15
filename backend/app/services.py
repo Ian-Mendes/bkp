@@ -37,6 +37,8 @@ def analyze(parsed, expected_followers=None, expected_following=None):
 def create_order_from_zip(db, zip_path, filename, user_id,
                           expected_followers=None, expected_following=None):
     parsed = parse_export(zip_path)
+    followers = set(parsed["followers"])
+    following = set(parsed["following"])
     usernames = list(dict.fromkeys(parsed["followers"] + parsed["following"]))
     order = Order(
         user_id=user_id, source_filename=filename, status="parsed",
@@ -46,7 +48,9 @@ def create_order_from_zip(db, zip_path, filename, user_id,
     )
     db.add(order)
     db.flush()
-    db.add_all(Profile(order_id=order.id, username=u) for u in usernames)
+    db.add_all(Profile(order_id=order.id, username=u,
+                       is_follower=u in followers, is_following=u in following)
+               for u in usernames)
     db.commit()
     return order
 

@@ -32,7 +32,16 @@ def test_arquivo_invalido(env):
 
 def test_perfil_so_guarda_campos_permitidos():
     cols = {c.name for c in Profile.__table__.columns}
-    assert cols == {"id", "order_id", "username", "followers_count", "following_count", "bio", "status"}
+    assert cols == {"id", "order_id", "username", "is_follower", "is_following",
+                    "followers_count", "following_count", "bio", "status"}
+
+def test_flags_relacao_do_takeout(env):
+    client, Session, h, body = _setup(env)
+    with Session() as db:
+        ps = {x.username: x for x in db.scalars(select(Profile))}
+    assert (ps["ana_silva"].is_follower, ps["ana_silva"].is_following) == (True, True)
+    assert (ps["bob"].is_follower, ps["bob"].is_following) == (True, False)
+    assert (ps["carla"].is_follower, ps["carla"].is_following) == (False, True)
 
 def test_worker_processa_tudo(env):
     client, Session, h, body = _setup(env)
@@ -54,8 +63,11 @@ def test_csv_ordenacao_null_zero_e_formula(env):
         db.commit()
     r = client.get(f"/orders/{oid}/export.csv?sort_by=followers_count&direction=desc", headers=h)
     rows = list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
-    assert list(rows[0].keys()) == ["username", "followers_count", "following_count", "bio", "status"]
+    assert list(rows[0].keys()) == ["username", "tipo", "followers_count", "following_count", "bio", "status"]
     assert [x["username"] for x in rows] == ["ana_silva", "bob", "carla"]
+    assert rows[0]["tipo"] == "ambos"               # ana_silva está nas duas listas
+    assert rows[1]["tipo"] == "seguidor"            # bob só nos followers
+    assert rows[2]["tipo"] == "seguindo"            # carla só no following
     assert rows[0]["bio"].startswith("'=")          # fórmula neutralizada
     assert rows[1]["followers_count"] == "0"        # zero de verdade
     assert rows[2]["followers_count"] == ""         # não consultado = vazio
@@ -70,6 +82,7 @@ def test_relatorio_e_xlsx(env):
     run_enrichment(oid)
     rep = client.get(f"/orders/{oid}/report", headers=h).json()
     assert rep["total_profiles"] == 3
+    assert rep["by_relationship"] == {"follower": 1, "following": 1, "both": 1}
     assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio"}
     assert rep["field_coverage"]["followers_count"]["filled"] == 0
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/orders/{oid}/export.xlsx", headers=h).content))

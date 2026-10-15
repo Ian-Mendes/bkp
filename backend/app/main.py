@@ -36,6 +36,11 @@ async def lifespan(app):
             # NOVO: token_version para revogação em massa (logout/troca de senha)
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                               "token_version INTEGER NOT NULL DEFAULT 0"))
+            # relação seguidor/seguindo no Takeout (perfil único por username)
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
+                              "is_follower BOOLEAN NOT NULL DEFAULT FALSE"))
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
+                              "is_following BOOLEAN NOT NULL DEFAULT FALSE"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     scheduler = BackgroundScheduler()
     # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)

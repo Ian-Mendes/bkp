@@ -8,7 +8,7 @@ uma fila (Celery/Redis) — o ponto único de troca é `enqueue_email`.
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 from . import rate, mailer
 from .db import get_db
@@ -208,9 +208,22 @@ def refresh_token(request: Request, response: Response, db: Session = Depends(ge
 
 
 @router.post("/logout", status_code=204)
-def logout(response: Response):
+def logout(request: Request, response: Response, creds=Depends(bearer),
+           db: Session = Depends(get_db)):
+    token = creds.credentials if creds else request.cookies.get(COOKIE_NAME)
+    access = decode_token(token) if token else None
+    refresh_token = request.cookies.get(REFRESH_COOKIE)
+    refresh = decode_refresh_token(refresh_token) if refresh_token else None
+    # O refresh permite revogar a sessão mesmo quando o access já expirou.
+    identity = (access[0], access[2]) if access else refresh
+    if identity:
+        db.execute(update(User).where(User.id == identity[0],
+                                      User.token_version == identity[1])
+                   .values(token_version=User.token_version + 1))
+        db.commit()
     _clear_cookies(response)
-    return Response(status_code=204)
+    response.status_code = 204
+    return response
 
 
 @router.get("/me")

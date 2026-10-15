@@ -188,7 +188,43 @@ def test_esgotar_cadastro_nao_bloqueia_recuperacao_de_senha(env, monkeypatch):
     assert r.status_code == 202 and len(OUTBOX) == 1       # a recuperação continua funcionando
 def test_cookie_de_sessao_autentica_e_logout_limpa(env):
     client, _, _ = env
-    register(client)
+    headers = register(client)
+    access = client.cookies.get("bkp_session")
+    refresh = client.cookies.get("bkp_refresh")
     assert client.get("/orders").status_code == 200   # cookie guardado pelo login
+    response = client.post("/auth/logout")
+    assert response.status_code == 204
+    assert response.content == b""
+    assert len(response.headers.get_list("set-cookie")) == 2
+    assert response.headers["cache-control"] == "no-store"
+    assert client.cookies.get("bkp_session") is None
+    assert client.cookies.get("bkp_refresh") is None
+    assert client.get("/auth/me").status_code == 401
+    assert client.get("/auth/me", headers=headers).status_code == 401
+    client.cookies.set("bkp_session", access)
+    client.cookies.set("bkp_refresh", refresh)
+    assert client.get("/auth/me").status_code == 401
+    assert client.post("/auth/refresh").status_code == 401
+    assert client.post("/auth/logout").status_code == 204
+
+
+def test_logout_com_apenas_refresh_revoga_sessao(env):
+    client, _, _ = env
+    headers = register(client)
+    refresh = client.cookies.get("bkp_refresh")
     client.cookies.clear()
-    assert client.get("/orders").status_code == 401   # sem cookie, sem acesso
+    client.cookies.set("bkp_refresh", refresh)
+    assert client.post("/auth/logout").status_code == 204
+    assert client.get("/auth/me", headers=headers).status_code == 401
+    client.cookies.set("bkp_refresh", refresh)
+    assert client.post("/auth/refresh").status_code == 401
+
+
+def test_logout_sem_sessao_limpa_cookies(env):
+    client, _, _ = env
+    client.cookies.set("bkp_session", "invalido", domain="testserver.local", path="/")
+    client.cookies.set("bkp_refresh", "invalido", domain="testserver.local", path="/")
+    response = client.post("/auth/logout")
+    assert response.status_code == 204
+    assert client.cookies.get("bkp_session") is None
+    assert client.cookies.get("bkp_refresh") is None

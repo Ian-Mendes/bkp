@@ -68,5 +68,15 @@ export async function refreshSession() {
 }
 
 export async function logout() {
-  await request("/auth/logout", { method: "POST" }).catch(() => {});
+  await api("/auth/logout", { method: "POST" });
+}
+
+export async function authenticatedApi(path, opts = {}) {
+  try {
+    return await api(path, opts);
+  } catch (err) {
+    if (err.status !== 401) throw err;
+    if (await refreshSession()) return api(path, opts);
+    throw err;
+  }
 }

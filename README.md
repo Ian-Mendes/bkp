@@ -29,7 +29,8 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Fila assíncrona (Celery + Redis) | ⏳ Adiada — e-mail e enriquecimento rodam no processo por ora; a fila volta com o provider real |
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
-| Frontend: upload, pedidos e downloads | ⏳ Não iniciado |
+| Frontend: upload do ZIP | ✅ Implementado no painel |
+| Frontend: lista de pedidos e downloads | ⏳ Pendente |
 
 ---
 
@@ -488,6 +489,7 @@ Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confir
 | POST | `/auth/refresh` | Renova o access token a partir do refresh cookie |
 | POST | `/auth/logout` | Invalida os cookies de sessão e refresh |
 | POST | `/orders` | Upload do ZIP |
+| GET | `/orders/upload-config` | Limite de upload em bytes (autenticado) |
 | GET | `/orders` | Lista pedidos |
 | GET | `/orders/{id}` | Detalhe do pedido |
 | POST | `/orders/{id}/start` | Iniciar processamento |
@@ -674,7 +676,8 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Frontend: login, cadastro e recuperação de senha
 - [ ] **Integração com provedor de enriquecimento (Apify ou similar)**
 - [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
-- [ ] Frontend: upload do ZIP, lista de pedidos e downloads
+- [x] Frontend: upload do ZIP
+- [ ] Frontend: lista de pedidos e downloads
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)

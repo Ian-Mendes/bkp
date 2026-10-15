@@ -300,6 +300,19 @@ a { color: #4f46e5; }
 /* Envio da exportação */
 .upload-card { max-width: 680px; }
 .dashboard-actions { display: flex; justify-content: flex-end; }
+.orders-card { max-width: 850px; }
+.orders-card h1 { margin-top: 20px; }
+.orders-card h2 { font-size: 20px; margin: 24px 0 12px; }
+.orders-card :focus-visible { outline: 3px solid #4f46e5; outline-offset: 3px; }
+.orders-actions { display: flex; flex-wrap: wrap; gap: 12px; }
+.orders-actions button { width: auto; }
+.orders-list { list-style: none; padding: 0; }
+.orders-list li { border-top: 1px solid #d1d5db; padding-bottom: 12px; }
+.order-counts dd { margin: 0 0 12px; font-weight: 600; }
+@media (max-width: 480px) {
+  .orders-card { padding: 20px; }
+  .orders-actions button { width: 100%; }
+}
 .upload-guide { margin: 24px 0; font-size: 14px; }
 .upload-guide summary { cursor: pointer; font-weight: 600; }
 .upload-guide ol { padding-left: 22px; }

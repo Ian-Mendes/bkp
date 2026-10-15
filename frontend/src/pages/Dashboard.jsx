@@ -116,6 +116,7 @@ export default function Dashboard() {
       <div className="card upload-card">
         <h1>Envie sua exportação do Instagram</h1>
         {user && <p className="sub">Logado como {user.email}</p>}
+        <nav aria-label="Pedidos"><Link to="/orders">Meus pedidos</Link></nav>
         <details className="upload-guide" open>
           <summary>Como obter seu ZIP</summary>
           <ol>
@@ -153,6 +154,7 @@ export default function Dashboard() {
         {error && <div className="error" role="alert">{error} {expired && <Link to="/login">Entrar novamente</Link>}</div>}
         {order && <section className="notice" tabIndex={-1} ref={result} aria-labelledby="upload-success">
           <h2 id="upload-success">Exportação recebida</h2>
+          <Link to={`/orders/${order.order_id}`}>Acompanhar pedido e baixar arquivos</Link>
           <p className="upload-filename">Pedido: {order.order_id}</p>
           <p>{order.followers} seguidores e {order.following} perfis seguindo. Entradas inválidas: {order.invalid}. Duplicatas removidas: {order.duplicates}.</p>
           <p>Estado do pedido: {order.status === "parsed" ? "analisado" : order.status}. O recebimento não conclui o enriquecimento, que é uma etapa separada. No MVP, o provider não consulta novos dados.</p>

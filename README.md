@@ -30,7 +30,8 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
 | Frontend: upload do ZIP | ✅ Implementado no painel |
-| Frontend: lista de pedidos e downloads | ⏳ Pendente |
+| Frontend: lista, acompanhamento e downloads de pedidos | ✅ Implementado |
+| Frontend: prévia paginada dos perfis | ⏳ Depende da Issue 4 |
 
 ---
 
@@ -413,6 +414,16 @@ e gere um `JWT_SECRET` e uma senha de banco diferentes para cada ambiente, princ
 
 ## Fluxo de Uso da API
 
+No navegador, acesse **Meus pedidos** no painel (`/dashboard`). A lista em
+`/orders` mostra status, criação e prazo de retenção. Abra um pedido para
+consultar contagens, atualizar o acompanhamento e baixar CSV, XLSX ou o
+relatório JSON. Os downloads refletem os dados atuais, mesmo antes da conclusão.
+
+A prévia paginada depende do endpoint da Issue 4, ainda ausente neste checkout.
+O backend exclui pedidos pela rotina de retenção e responde 404 também para
+pedidos inexistentes ou de outra conta; a interface não consegue distinguir
+esses motivos nem confirmar expiração apenas pela data prevista.
+
 ```bash
 # 1. Registrar (envia um e-mail de confirmação; não devolve token)
 curl -X POST http://localhost:8000/auth/register \
@@ -677,7 +688,8 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [ ] **Integração com provedor de enriquecimento (Apify ou similar)**
 - [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
 - [x] Frontend: upload do ZIP
-- [ ] Frontend: lista de pedidos e downloads
+- [x] Frontend: lista de pedidos e downloads
+- [ ] Frontend: prévia paginada dos perfis (Issue 4)
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)

@@ -1,6 +1,7 @@
 const API = "/api";   // mesma origem; encaminhada pelo proxy (Vite em dev, reverse proxy em prod)
 
 function errorMessage(data, status) {
+  if (status >= 500) return "O servidor não conseguiu concluir a solicitação. Tente novamente mais tarde.";
   const d = data && data.detail;
   if (typeof d === "string") return d;
   if (Array.isArray(d)) return "Dados inválidos. Confira os campos e tente novamente.";
@@ -38,9 +39,16 @@ export async function api(path, opts = {}) {
   return data;
 }
 
-export async function download(path) {
-  // Baixa um arquivo (CSV/XLSX) e dispara o salvamento no navegador.
-  const res = await request(path);
+export async function download(path, fallbackName = "download") {
+  const res = await withSession(async () => {
+    const response = await request(path);
+    if (response.status === 401) {
+      const err = new Error("Sua sessão expirou. Entre novamente.");
+      err.status = 401;
+      throw err;
+    }
+    return response;
+  });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     const err = new Error(errorMessage(data, res.status));
@@ -49,7 +57,7 @@ export async function download(path) {
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") || "";
-  const name = (disposition.match(/filename="?([^";]+)"?/) || [])[1] || "download";
+  const name = (disposition.match(/filename="?([^";]+)"?/) || [])[1] || fallbackName;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -57,7 +65,7 @@ export async function download(path) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Tenta renovar o access token usando o refresh (cookie httpOnly).
@@ -71,12 +79,16 @@ export async function logout() {
   await api("/auth/logout", { method: "POST" });
 }
 
-export async function authenticatedApi(path, opts = {}) {
+async function withSession(operation) {
   try {
-    return await api(path, opts);
+    return await operation();
   } catch (err) {
     if (err.status !== 401) throw err;
-    if (await refreshSession()) return api(path, opts);
+    if (await refreshSession()) return operation();
     throw err;
   }
+}
+
+export async function authenticatedApi(path, opts = {}) {
+  return withSession(() => api(path, opts));
 }

@@ -296,3 +296,23 @@ a { color: #4f46e5; }
   .landing-header-inner { padding: 14px 20px; }
   .landing-logo { font-size: 17px; }
 }
+
+/* Envio da exportação */
+.upload-card { max-width: 680px; }
+.dashboard-actions { display: flex; justify-content: flex-end; }
+.upload-guide { margin: 24px 0; font-size: 14px; }
+.upload-guide summary { cursor: pointer; font-weight: 600; }
+.upload-guide ol { padding-left: 22px; }
+.upload-guide li { margin: 10px 0; }
+.upload-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.upload-fields legend { font-weight: 600; margin-bottom: 12px; }
+.upload-drop { border: 2px dashed #9ca3af; border-radius: 8px; padding: 20px; text-align: center; }
+.upload-drop.is-dragging { border-color: #4f46e5; background: #eef2ff; }
+.upload-filename { overflow-wrap: anywhere; }
+.upload-submit { margin: 20px 0; }
+.upload-card h2 { font-size: 20px; margin-bottom: 12px; }
+.upload-card :focus-visible { outline: 3px solid #4f46e5; outline-offset: 3px; }
+@media (max-width: 480px) {
+  .upload-card { padding: 20px; }
+  .upload-drop { padding: 12px; }
+}

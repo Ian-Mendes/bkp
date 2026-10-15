@@ -149,6 +149,10 @@ def list_orders(user: User = Depends(current_user), db: Session = Depends(get_db
              "created_at": o.created_at.isoformat(),
              "expires_at": (o.created_at + timedelta(days=days)).isoformat()} for o in rows]
 
+@app.get("/orders/upload-config")
+def upload_config(user: User = Depends(current_user)):
+    return {"max_upload_bytes": MAX_UPLOAD_MB * 1024 * 1024}
+
 @app.get("/orders/{order_id}")
 def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _get_order(db, order_id, user)

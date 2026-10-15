@@ -1,0 +1,52 @@
+# Deploy contínuo para staging (Vultr VPS) via SSH, puxando as imagens do GHCR.
+# Inerte até os secrets existirem: o passo só roda se DEPLOY_HOST estiver definido.
+#
+# Secrets necessários (Settings → Secrets and variables → Actions):
+#   DEPLOY_HOST        IP/domínio do VPS
+#   DEPLOY_USER        usuário SSH (ex.: root)
+#   SSH_PRIVATE_KEY    chave privada SSH
+#   DEPLOY_PATH        diretório do projeto no servidor (ex.: /opt/bkp)
+#
+# O VPS precisa autenticar no GHCR uma vez: docker login ghcr.io -u <user> -p <PAT com read:packages>
+# (ou torne o pacote público).
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag/commit das imagens a implantar (ex.: main, ou o sha de um commit anterior para rollback)"
+        required: false
+        default: main
+  workflow_run:
+    workflows: ["Build and publish images"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - name: Deploy via SSH
+        if: ${{ env.DEPLOY_HOST != '' }}
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          envs: DEPLOY_PATH
+          script: |
+            set -e
+            cd "${DEPLOY_PATH}"
+            export IMAGE_TAG="${{ github.event.inputs.ref || 'main' }}"
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+            # Healthcheck: /health existe na API (sem porta publicada em prod; consulta por dentro do container)
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod exec -T api python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+            echo "Deploy OK (tag ${IMAGE_TAG})"

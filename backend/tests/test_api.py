@@ -75,3 +75,14 @@ def test_relatorio_e_xlsx(env):
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/orders/{oid}/export.xlsx", headers=h).content))
     assert wb.sheetnames == ["Perfis", "Resumo"]
     assert wb["Perfis"].max_row == 4
+
+
+def test_limite_upload_autenticado(env, monkeypatch):
+    client, _, _ = env
+    assert client.get("/orders/upload-config").status_code == 401
+    h = register(client)
+    monkeypatch.setattr(main, "MAX_UPLOAD_MB", 7)
+    response = client.get("/orders/upload-config", headers=h)
+    assert response.status_code == 200
+    assert response.json() == {"max_upload_bytes": 7 * 1024 * 1024}
+    assert response.headers["Cache-Control"] == "no-store"

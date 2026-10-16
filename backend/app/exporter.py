@@ -3,7 +3,7 @@ from openpyxl import Workbook
 from sqlalchemy import select, func, or_
 from .models import Profile
 
-COLUMNS = ["username", "followers_count", "following_count", "bio", "status"]
+COLUMNS = ["username", "profile_url", "followers_count", "following_count", "bio", "status"]
 SORTS = {"followers_count": Profile.followers_count,
          "following_count": Profile.following_count,
          "username": Profile.username}
@@ -19,7 +19,7 @@ def safe(v):
     return v
 
 def row(p):
-    return [safe(x) for x in (p.username, p.followers_count, p.following_count, p.bio, p.status)]
+    return [safe(x) for x in (p.username, p.profile_url, p.followers_count, p.following_count, p.bio, p.status)]
 
 def query_profiles(order_id, sort_by="followers_count", direction="desc", q=None):
     stmt = select(Profile).where(Profile.order_id == order_id)
@@ -38,7 +38,8 @@ def build_report(db, order):
     coverage = {}
     for name, col in (("followers_count", Profile.followers_count),
                       ("following_count", Profile.following_count),
-                      ("bio", Profile.bio)):
+                      ("bio", Profile.bio),
+                      ("profile_url", Profile.profile_url)):
         filled = db.scalar(select(func.count(col)).where(base)) or 0
         coverage[name] = {"filled": filled, "total": total,
                           "pct": round(100 * filled / total, 1) if total else 0}

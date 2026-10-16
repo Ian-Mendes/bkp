@@ -674,11 +674,11 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Exportação CSV/XLSX
 - [x] Confirmação de e-mail e recuperação de senha
 - [x] Frontend: login, cadastro e recuperação de senha
-- [ ] **Integração com provedor de enriquecimento (Apify ou similar)**
+- [x] **Integração com provedor de enriquecimento (Apify)** — implementado, inativo por padrão (`PROVIDER=null`); ativação com token (#22) e escala com fila (#14)
 - [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
 - [x] Frontend: upload do ZIP
 - [ ] Frontend: lista de pedidos e downloads
-- [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual)
+- [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)
 - [ ] Deploy em staging/produção (provedor: Vultr; aguardando provisionamento do servidor)

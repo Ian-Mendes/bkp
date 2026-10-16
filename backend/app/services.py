@@ -95,6 +95,9 @@ def run_enrichment(order_id: str) -> str:
                 p.followers_count = r.followers_count
                 p.following_count = r.following_count
                 p.bio = r.bio
+                p.profile_url = r.profile_url
+                p.enrich_source = r.source
+                p.enriched_at = r.fetched_at
             db.commit()
         order.status = "done"
         db.commit()

@@ -36,6 +36,13 @@ async def lifespan(app):
             # NOVO: token_version para revogação em massa (logout/troca de senha)
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                               "token_version INTEGER NOT NULL DEFAULT 0"))
+            # NOVO: enriquecimento Apify (issue #13): link, origem e data da consulta
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
+                              "profile_url VARCHAR(255)"))
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
+                              "enrich_source VARCHAR(30)"))
+            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
+                              "enriched_at TIMESTAMPTZ"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     scheduler = BackgroundScheduler()
     # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)

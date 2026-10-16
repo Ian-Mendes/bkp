@@ -41,5 +41,8 @@ class Profile(Base):
     followers_count: Mapped[int | None] = mapped_column(Integer)
     following_count: Mapped[int | None] = mapped_column(Integer)
     bio: Mapped[str | None] = mapped_column(Text)
+    profile_url: Mapped[str | None] = mapped_column(String(255))   # link canônico (Apify `url`)
+    enrich_source: Mapped[str | None] = mapped_column(String(30))  # provider que consultou
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="pending")
     order: Mapped[Order] = relationship(back_populates="profiles")

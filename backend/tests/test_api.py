@@ -32,7 +32,7 @@ def test_arquivo_invalido(env):
 
 def test_perfil_so_guarda_campos_permitidos():
     cols = {c.name for c in Profile.__table__.columns}
-    assert cols == {"id", "order_id", "username", "followers_count", "following_count", "bio", "status"}
+    assert cols == {"id", "order_id", "username", "profile_url", "followers_count", "following_count", "bio", "status", "enrich_source", "enriched_at"}
 
 def test_worker_processa_tudo(env):
     client, Session, h, body = _setup(env)
@@ -54,7 +54,7 @@ def test_csv_ordenacao_null_zero_e_formula(env):
         db.commit()
     r = client.get(f"/orders/{oid}/export.csv?sort_by=followers_count&direction=desc", headers=h)
     rows = list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
-    assert list(rows[0].keys()) == ["username", "followers_count", "following_count", "bio", "status"]
+    assert list(rows[0].keys()) == ["username", "profile_url", "followers_count", "following_count", "bio", "status"]
     assert [x["username"] for x in rows] == ["ana_silva", "bob", "carla"]
     assert rows[0]["bio"].startswith("'=")          # fórmula neutralizada
     assert rows[1]["followers_count"] == "0"        # zero de verdade
@@ -70,7 +70,7 @@ def test_relatorio_e_xlsx(env):
     run_enrichment(oid)
     rep = client.get(f"/orders/{oid}/report", headers=h).json()
     assert rep["total_profiles"] == 3
-    assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio"}
+    assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio", "profile_url"}
     assert rep["field_coverage"]["followers_count"]["filled"] == 0
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/orders/{oid}/export.xlsx", headers=h).content))
     assert wb.sheetnames == ["Perfis", "Resumo"]

@@ -33,6 +33,14 @@ services:
       db: {condition: service_healthy}
       # redis: {condition: service_started}   # reativar ao reintroduzir a fila
 
+  poller:   # worker de enriquecimento sem broker (issue #14, v1 simplificada)
+    build: ./backend
+    command: python -m app.poller
+    env_file: .env
+    depends_on:
+      db: {condition: service_healthy}
+    restart: unless-stopped   # volta sozinho após queda/reboot: a fila é o banco
+
   # worker (removido no MVP; reativar ao reintroduzir a fila):
   #   build: ./backend
   #   command: celery -A app.worker worker --loglevel=info --concurrency=2

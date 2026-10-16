@@ -26,7 +26,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
 | Sessão em cookie httpOnly + refresh | ✅ Implementado |
-| Fila assíncrona (Celery + Redis) | ⏳ Adiada — e-mail e enriquecimento rodam no processo por ora; a fila volta com o provider real |
+| Fila assíncrona (Celery + Redis) | ⏳ Adiada — enriquecimento roda em worker próprio com polling no Postgres (`poller`, sem broker); Celery/Redis seguem reservados para escala |
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
 | Frontend: upload do ZIP | ✅ Implementado no painel |
@@ -439,7 +439,7 @@ curl -X POST http://localhost:8000/orders \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@takeout.zip"
 
-# 5. Iniciar o enriquecimento
+# 5. Iniciar o enriquecimento (responde 202 e o worker processa em background)
 curl -X POST http://localhost:8000/orders/$ORDER_ID/start \
   -H "Authorization: Bearer $TOKEN"
 

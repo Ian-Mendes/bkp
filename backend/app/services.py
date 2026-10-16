@@ -1,7 +1,7 @@
 """Regras de negócio: pedidos (criação, análise, enriquecimento) e retenção."""
 import os, uuid
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from .db import SessionLocal
 from .importer import parse_export
 from .models import Order, Profile
@@ -61,6 +61,34 @@ def delete_orders(db, order_ids):
     return len(order_ids)
 
 BATCH = 100
+
+
+def claim_queued_order(db) -> uuid.UUID | None:
+    """Reivindica o pedido `queued` mais antigo, marcando `processing`.
+
+    Com `FOR UPDATE SKIP LOCKED` dois workers nunca pegam o mesmo pedido
+    (no-op no SQLite dos testes; vale no Postgres). Retorna None sem espera.
+    """
+    oid = db.scalar(select(Order.id).where(Order.status == "queued")
+                    .order_by(Order.created_at).limit(1)
+                    .with_for_update(skip_locked=True))
+    if oid is None:
+        return None
+    db.get(Order, oid).status = "processing"
+    db.commit()
+    return oid
+
+
+def requeue_orphans(db) -> int:
+    """Devolve `processing` órfãos (queda no meio do lote) para `queued`.
+
+    O worker chama no boot; como o `run_enrichment` retoma pelos `pending`,
+    nada é refeito — só o restante. Retorna quantos voltou a enfileirar.
+    """
+    n = db.execute(update(Order).where(Order.status == "processing")
+                   .values(status="queued")).rowcount
+    db.commit()
+    return n
 
 def run_enrichment(order_id: str) -> str:
     """Enriquece os perfis pendentes de um pedido, hoje de forma síncrona.

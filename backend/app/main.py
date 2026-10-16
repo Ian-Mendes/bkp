@@ -12,7 +12,7 @@ from .db import Base, engine, get_db
 from .models import Order, Profile, User
 from .importer import ExportError
 from .services import (create_order_from_zip, delete_orders, retention_days,
-                       run_enrichment, purge_expired_orders)
+                       purge_expired_orders)
 from . import exporter, rate
 
 UPLOAD_DIR = "/data/uploads"
@@ -169,13 +169,14 @@ def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Sessi
             "followers": order.followers_total, "following": order.following_total,
             "profiles_by_status": {s: n for s, n in rows}}
 
-@app.post("/orders/{order_id}/start")
+@app.post("/orders/{order_id}/start", status_code=202)
 def start_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _get_order(db, order_id, user)
     if order.status not in ("parsed", "failed"):
         raise HTTPException(409, f"Pedido em estado '{order.status}'")
-    status = run_enrichment(str(order.id))
-    return {"order_id": str(order.id), "status": status}
+    order.status = "queued"   # o worker (`python -m app.poller`) processa fora da request
+    db.commit()
+    return {"order_id": str(order.id), "status": order.status}
 
 @app.delete("/orders/{order_id}", status_code=204)
 def delete_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):

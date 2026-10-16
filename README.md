@@ -26,7 +26,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
 | Sessão em cookie httpOnly + refresh | ✅ Implementado |
-| Fila assíncrona (Celery + Redis) | ⏳ Adiada — e-mail e enriquecimento rodam no processo por ora; a fila volta com o provider real |
+| Fila assíncrona (Celery + Redis) | ⏳ Adiada — enriquecimento roda em worker próprio com polling no Postgres (`poller`, sem broker); Celery/Redis seguem reservados para escala |
 | Exportação CSV/XLSX | ✅ Implementado |
 | **Enriquecimento (provider real)** | ⏳ **Pendente** — usando `NullProvider` |
 | Frontend: upload do ZIP | ✅ Implementado no painel |
@@ -439,7 +439,7 @@ curl -X POST http://localhost:8000/orders \
   -H "Authorization: Bearer $TOKEN" \
   -F "file=@takeout.zip"
 
-# 5. Iniciar o enriquecimento
+# 5. Iniciar o enriquecimento (responde 202 e o worker processa em background)
 curl -X POST http://localhost:8000/orders/$ORDER_ID/start \
   -H "Authorization: Bearer $TOKEN"
 
@@ -675,7 +675,7 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Confirmação de e-mail e recuperação de senha
 - [x] Frontend: login, cadastro e recuperação de senha
 - [x] **Integração com provedor de enriquecimento (Apify)** — implementado, inativo por padrão (`PROVIDER=null`); ativação com token (#22) e escala com fila (#14)
-- [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
+- [x] Fila assíncrona sem broker (worker com polling no Postgres) — Celery/Redis reservados para escala
 - [x] Frontend: upload do ZIP
 - [ ] Frontend: lista de pedidos e downloads
 - [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)

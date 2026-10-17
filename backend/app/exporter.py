@@ -33,6 +33,12 @@ def row(profile, is_follower, is_following):
                               profile.profile_url, profile.followers_count,
                               profile.following_count, profile.bio, profile.status)]
 
+def to_profile_dict(profile, is_follower, is_following):
+    """Item da prévia para o frontend: dados do perfil + relação (sem `safe`)."""
+    return {"username": profile.username, "tipo": tipo(is_follower, is_following),
+            "status": profile.status, "followers_count": profile.followers_count,
+            "following_count": profile.following_count, "bio": profile.bio}
+
 def query_profiles(order_id, sort_by="followers_count", direction="desc", q=None):
     """Linhas do pedido: `(Profile, is_follower, is_following)` derivados das entries.
 
@@ -54,6 +60,33 @@ def query_profiles(order_id, sort_by="followers_count", direction="desc", q=None
     col = SORTS.get(sort_by, Profile.followers_count)
     col = col.asc().nulls_last() if direction == "asc" else col.desc().nulls_last()
     return db_query.order_by(col, Profile.username)
+
+def profile_page(db, order_id, limit, offset, tipo=None, q=None):
+    """Página de perfis do pedido: `(total, rows)` para a prévia do frontend.
+
+    Filtro `tipo` opera sobre as flags agregadas (HAVING); `q` busca em `bio`.
+    `rows` são tuplas `(Profile, is_follower, is_following)`, ordenadas por username.
+    """
+    is_follower = func.sum(case((TakeoutEntry.relation == "follower", 1), else_=0))
+    is_following = func.sum(case((TakeoutEntry.relation == "following", 1), else_=0))
+    db_query = (
+        select(Profile, is_follower.label("is_follower"), is_following.label("is_following"))
+        .join(TakeoutEntry, TakeoutEntry.username == Profile.username)
+        .where(TakeoutEntry.order_id == order_id)
+        .group_by(Profile.id)
+    )
+    terms = [t.strip() for t in (q or "").split(",") if t.strip()]
+    if terms:
+        db_query = db_query.where(or_(*[Profile.bio.ilike(f"%{t}%") for t in terms]))
+    if tipo == "ambos":
+        db_query = db_query.having(is_follower > 0, is_following > 0)
+    elif tipo == "seguidor":
+        db_query = db_query.having(is_follower > 0, is_following == 0)
+    elif tipo == "seguindo":
+        db_query = db_query.having(is_follower == 0, is_following > 0)
+    total = db.scalar(select(func.count()).select_from(db_query.subquery())) or 0
+    rows = db.execute(db_query.order_by(Profile.username).limit(limit).offset(offset)).all()
+    return total, rows
 
 def build_report(db, order):
     in_order = TakeoutEntry.order_id == order.id

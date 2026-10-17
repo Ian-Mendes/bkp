@@ -447,6 +447,10 @@ curl -X POST http://localhost:8000/orders/$ORDER_ID/start \
 curl http://localhost:8000/orders/$ORDER_ID \
   -H "Authorization: Bearer $TOKEN"
 
+# 6b. Prévia paginada dos perfis (opcional: limit, offset, tipo, q)
+curl "http://localhost:8000/orders/$ORDER_ID/profiles?limit=50&offset=0&tipo=ambos" \
+  -H "Authorization: Bearer $TOKEN"
+
 # 7. Baixar relatório
 curl http://localhost:8000/orders/$ORDER_ID/report \
   -H "Authorization: Bearer $TOKEN"
@@ -492,6 +496,7 @@ Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confir
 | GET | `/orders/upload-config` | Limite de upload em bytes (autenticado) |
 | GET | `/orders` | Lista pedidos |
 | GET | `/orders/{id}` | Detalhe do pedido |
+| GET | `/orders/{id}/profiles` | Prévia paginada dos perfis (`limit`/`offset`/`tipo`/`q`) |
 | POST | `/orders/{id}/start` | Iniciar processamento |
 | DELETE | `/orders/{id}` | Excluir pedido |
 | GET | `/orders/{id}/report` | Relatório em JSON |

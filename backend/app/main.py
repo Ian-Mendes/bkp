@@ -2,7 +2,7 @@ import os, uuid, zipfile
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Literal
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, text
 from sqlalchemy.orm import Session
@@ -166,6 +166,19 @@ def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Sessi
     return {"order_id": str(order.id), "status": order.status,
             "followers": order.followers_total, "following": order.following_total,
             "profiles_by_status": {s: n for s, n in rows}}
+
+@app.get("/orders/{order_id}/profiles")
+def profiles(order_id: uuid.UUID,
+             limit: int = Query(50, ge=1, le=200),
+             offset: int = Query(0, ge=0),
+             tipo: Literal["seguidor", "seguindo", "ambos"] | None = None,
+             q: str | None = None,
+             user: User = Depends(current_user),
+             db: Session = Depends(get_db)):
+    _get_order(db, order_id, user)
+    total, rows = exporter.profile_page(db, order_id, limit, offset, tipo, q)
+    return {"total": total, "limit": limit, "offset": offset,
+            "profiles": [exporter.to_profile_dict(p, f, g) for p, f, g in rows]}
 
 @app.post("/orders/{order_id}/start")
 def start_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):

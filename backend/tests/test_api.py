@@ -103,3 +103,57 @@ def test_limite_upload_autenticado(env, monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"max_upload_bytes": 7 * 1024 * 1024}
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_profiles_paginado(env):
+    client, Session, h, body = _setup(env)
+    oid = body["order_id"]
+    r = client.get(f"/orders/{oid}/profiles?limit=2&offset=0", headers=h)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["total"] == 3
+    assert data["limit"] == 2 and data["offset"] == 0
+    assert [p["username"] for p in data["profiles"]] == ["ana_silva", "bob"]
+    r2 = client.get(f"/orders/{oid}/profiles?limit=2&offset=2", headers=h).json()
+    assert r2["total"] == 3
+    assert [p["username"] for p in r2["profiles"]] == ["carla"]
+
+
+def test_profiles_filtro_tipo(env):
+    client, Session, h, body = _setup(env)
+    oid = body["order_id"]
+    assert [p["username"] for p in client.get(f"/orders/{oid}/profiles?tipo=ambos", headers=h).json()["profiles"]] == ["ana_silva"]
+    assert [p["username"] for p in client.get(f"/orders/{oid}/profiles?tipo=seguidor", headers=h).json()["profiles"]] == ["bob"]
+    assert [p["username"] for p in client.get(f"/orders/{oid}/profiles?tipo=seguindo", headers=h).json()["profiles"]] == ["carla"]
+
+
+def test_profiles_q(env):
+    client, Session, h, body = _setup(env)
+    oid = body["order_id"]
+    with Session() as db:
+        ps = {x.username: x for x in db.scalars(select(Profile))}
+        ps["bob"].bio = "Designer em Natal"
+        db.commit()
+    r = client.get(f"/orders/{oid}/profiles?q=designer", headers=h).json()
+    assert r["total"] == 1
+    assert r["profiles"][0]["username"] == "bob"
+
+
+def test_profiles_isolamento(env):
+    client, Session, h, body = _setup(env)
+    oid = body["order_id"]
+    hb = register(client, "bia@empresa.com.br")
+    assert client.get(f"/orders/{oid}/profiles", headers=hb).status_code == 404
+
+
+def test_profiles_null_nao_zero(env):
+    client, Session, h, body = _setup(env)
+    oid = body["order_id"]
+    run_enrichment(oid)   # NullProvider → not_enriched, contadores ficam NULL
+    r = client.get(f"/orders/{oid}/profiles", headers=h).json()
+    assert r["total"] == 3
+    for p in r["profiles"]:
+        assert p["status"] == "not_enriched"
+        assert p["followers_count"] is None
+        assert p["following_count"] is None
+        assert p["bio"] is None

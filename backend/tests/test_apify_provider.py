@@ -4,7 +4,6 @@ Nenhum teste usa token real (`PROVIDER` segue `null` por padrão no CI).
 """
 import httpx
 import pytest
-import uuid
 
 from app.providers import get_provider
 from app.providers.apify_provider import ApifyProvider
@@ -156,8 +155,73 @@ def test_enriquecimento_persiste_link_origem_data(env, monkeypatch):
     monkeypatch.setattr(services, "get_provider", lambda: FakeProvider())
     assert services.run_enrichment(oid) == "done"
     with Session() as db:
-        prof = db.scalar(select(Profile).where(Profile.order_id == uuid.UUID(oid)))
+        prof = db.scalar(select(Profile).where(Profile.username == "ana_silva"))
         assert prof.profile_url == "https://www.instagram.com/ana_silva"
         assert prof.enrich_source == "fake"
         # SQLite descarta o tz (no Postgres, TIMESTAMPTZ preserva)
         assert prof.enriched_at == quando.replace(tzinfo=None)
+
+
+def test_cache_reusa_enriquecido_ha_menos_de_7_dias(env, monkeypatch):
+    """Perfil 'ok' enriquecido há < 7 dias não é reconsultado (usa o do banco)."""
+    from datetime import datetime, timezone
+
+    from app import services
+    from app.providers.base import ProfileResult
+    from tests.helpers import make_zip, register, upload
+    from tests.test_api import OLD
+
+    client, Session, tmp = env
+    h = register(client)
+    p = tmp / "e.zip"
+    make_zip(p, followers=[("ana_silva", OLD)], following=[])
+
+    calls = {"n": 0}
+    class FakeProvider:
+        name = "fake"
+        def fetch(self, username):
+            calls["n"] += 1
+            return ProfileResult(status="ok", followers_count=10, following_count=5,
+                                 bio="b", source="fake", fetched_at=datetime.now(timezone.utc))
+    monkeypatch.setattr(services, "get_provider", lambda: FakeProvider())
+
+    oid1 = upload(client, p, h).json()["order_id"]
+    assert services.run_enrichment(oid1) == "done"
+    assert calls["n"] == 1   # primeira vez consulta
+
+    # segundo pedido com o mesmo username: perfil já "ok" e recente → reusa (não consulta)
+    oid2 = upload(client, p, h).json()["order_id"]
+    assert services.run_enrichment(oid2) == "done"
+    assert calls["n"] == 1   # cache: provider não chamado de novo
+
+
+@pytest.mark.parametrize("status", ["not_found", "private"])
+def test_cache_nao_se_aplica_a_not_found_private(env, monkeypatch, status):
+    """`not_found`/`private` são reconsultados na próxima tentativa, mesmo recentes."""
+    from datetime import datetime, timezone
+
+    from app import services
+    from app.providers.base import ProfileResult
+    from tests.helpers import make_zip, register, upload
+    from tests.test_api import OLD
+
+    client, Session, tmp = env
+    h = register(client)
+    p = tmp / "e.zip"
+    make_zip(p, followers=[("ana_silva", OLD)], following=[])
+
+    calls = {"n": 0}
+    class FakeProvider:
+        name = "fake"
+        def fetch(self, username):
+            calls["n"] += 1
+            return ProfileResult(status=status, source="fake", fetched_at=datetime.now(timezone.utc))
+    monkeypatch.setattr(services, "get_provider", lambda: FakeProvider())
+
+    oid1 = upload(client, p, h).json()["order_id"]
+    assert services.run_enrichment(oid1) == "done"
+    assert calls["n"] == 1
+
+    oid2 = upload(client, p, h).json()["order_id"]
+    assert services.run_enrichment(oid2) == "done"
+    assert calls["n"] == 2   # reconsultado: sem cache para not_found/private

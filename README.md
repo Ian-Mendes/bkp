@@ -217,8 +217,8 @@ Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
 | 2 | `docker compose logs api --tail 20` | Termina com `Application startup complete` e **sem** traceback |
 | 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
 | 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
-| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`), provando que o banco aceita a senha |
-| 6 | `docker compose exec api pytest` | `50 passed` |
+| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`, `takeout_entries`), provando que o banco aceita a senha |
+| 6 | `docker compose exec api pytest` | Todos os testes passam |
 | 7 | Abrir http://localhost:3000 | Tela de login do frontend |
 | 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
 
@@ -258,7 +258,7 @@ Procure pelo sintoma. Quando não souber a causa, o primeiro passo é sempre
 | `Bind for 127.0.0.1:8025 failed: port is already allocated` (ou 3000/8000) | Outra coisa usa a porta, quase sempre containers de outra cópia do projeto | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` para achar o dono; remova com `docker rm -f NOME`, ou na outra pasta rode `docker compose down`. Se não for Docker: `sudo ss -ltnp \| grep 8025` |
 | Mudei o `.env` e nada mudou | `restart` não relê o `.env` | `docker compose up -d --force-recreate` |
 | Mudei `requirements.txt` ou `package.json` | Imagem precisa ser reconstruída | `docker compose up -d --build` |
-| Erro de `column ... does not exist` após atualizar | Não há migrações ainda (`create_all` + `ALTER` pontual) e o banco antigo ficou sem a coluna nova | Em desenvolvimento: `docker compose down -v && docker compose up -d` (apaga os dados) |
+| Erro de `column ... does not exist` após atualizar | Não há migrações ainda (`create_all`); o schema evolui (ex.: `profiles` virou tabela global e `takeout_entries` é nova) e o banco antigo não acompanha | Em desenvolvimento: `docker compose down -v && docker compose up -d` (apaga os dados) |
 
 > **Por que o banco "ignora" a senha nova?** O Postgres só lê `POSTGRES_PASSWORD`
 > na **primeira** inicialização do volume. Depois disso, a senha fica gravada no
@@ -334,8 +334,8 @@ Atalhos para os comandos mais comuns (tudo em container; nunca `pytest`/`pip`/`n
 # Apagar tudo (banco, uploads e e-mails do Mailpit)
 docker compose down -v && docker compose up -d
 
-# Só usuários, pedidos e perfis
-docker compose exec db psql -U app -d backup -c "TRUNCATE users, orders, profiles RESTART IDENTITY CASCADE;"
+# Só usuários, pedidos e perfis (e as relações do takeout)
+docker compose exec db psql -U app -d backup -c "TRUNCATE users, orders, profiles, takeout_entries RESTART IDENTITY CASCADE;"
 
 # Zerar limites de tentativas (rate limit): o contador é em memória,
 # então basta reiniciar a API
@@ -537,7 +537,7 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - ✅ Uploads processados e **apagados** após parsing (padrão).
 - ✅ Isolamento estrito entre clientes (testado).
 - ✅ Downloads e demais rotas de pedidos exigem autenticação (Bearer).
-- ✅ Retenção configurável (`RETENTION_DAYS`, padrão 30 dias).
+- ✅ Retenção configurável (`RETENTION_DAYS`, padrão 30 dias) — apaga pedidos e a relação seguidor/seguindo; o cache de perfis enriquecidos (dados públicos) persiste para reuso.
 - ✅ Neutralização de fórmulas no CSV/XLSX (anti-injeção).
 
 **Contas e sessões**

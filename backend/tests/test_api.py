@@ -1,8 +1,8 @@
 import csv, io, os
 import openpyxl
-from sqlalchemy import select
+from sqlalchemy import select, func
 from app import main
-from app.models import Profile
+from app.models import Profile, TakeoutEntry
 from app.services import run_enrichment
 from tests.helpers import make_zip, register, upload, OLD, NEW
 
@@ -32,7 +32,22 @@ def test_arquivo_invalido(env):
 
 def test_perfil_so_guarda_campos_permitidos():
     cols = {c.name for c in Profile.__table__.columns}
-    assert cols == {"id", "order_id", "username", "profile_url", "followers_count", "following_count", "bio", "status", "enrich_source", "enriched_at"}
+    assert cols == {"id", "username", "profile_url", "followers_count", "following_count", "bio", "status", "enrich_source", "enriched_at"}
+    entries = {c.name for c in TakeoutEntry.__table__.columns}
+    assert entries == {"id", "order_id", "username", "relation"}
+
+def test_relacao_ambos_gera_duas_entries(env):
+    """Usuário nas duas listas gera 2 entries (follower + following) num só perfil."""
+    client, Session, tmp = env
+    h = register(client)
+    p = tmp / "e.zip"
+    make_zip(p, followers=[("ana_silva", OLD), ("bob", NEW)], following=[("ana_silva", OLD), ("carla", NEW)])
+    upload(client, p, h)
+    with Session() as db:
+        rel = {(e.username, e.relation) for e in db.scalars(select(TakeoutEntry))}
+        assert rel == {("ana_silva", "follower"), ("ana_silva", "following"),
+                       ("bob", "follower"), ("carla", "following")}
+        assert db.scalar(select(func.count()).select_from(Profile)) == 3
 
 def test_worker_processa_tudo(env):
     client, Session, h, body = _setup(env)
@@ -54,8 +69,9 @@ def test_csv_ordenacao_null_zero_e_formula(env):
         db.commit()
     r = client.get(f"/orders/{oid}/export.csv?sort_by=followers_count&direction=desc", headers=h)
     rows = list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
-    assert list(rows[0].keys()) == ["username", "profile_url", "followers_count", "following_count", "bio", "status"]
+    assert list(rows[0].keys()) == ["username", "tipo", "profile_url", "followers_count", "following_count", "bio", "status"]
     assert [x["username"] for x in rows] == ["ana_silva", "bob", "carla"]
+    assert [x["tipo"] for x in rows] == ["ambos", "seguidor", "seguindo"]
     assert rows[0]["bio"].startswith("'=")          # fórmula neutralizada
     assert rows[1]["followers_count"] == "0"        # zero de verdade
     assert rows[2]["followers_count"] == ""         # não consultado = vazio
@@ -70,6 +86,7 @@ def test_relatorio_e_xlsx(env):
     run_enrichment(oid)
     rep = client.get(f"/orders/{oid}/report", headers=h).json()
     assert rep["total_profiles"] == 3
+    assert rep["by_relationship"] == {"follower": 1, "following": 1, "both": 1}
     assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio", "profile_url"}
     assert rep["field_coverage"]["followers_count"]["filled"] == 0
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/orders/{oid}/export.xlsx", headers=h).content))

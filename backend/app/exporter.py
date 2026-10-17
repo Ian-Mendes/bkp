@@ -3,7 +3,7 @@ from openpyxl import Workbook
 from sqlalchemy import select, func, or_, case
 from .models import Profile, TakeoutEntry
 
-COLUMNS = ["username", "type", "profile_url", "followers_count", "following_count", "bio", "status"]
+COLUMNS = ["username", "tipo", "profile_url", "followers_count", "following_count", "bio", "status"]
 SORTS = {"followers_count": Profile.followers_count,
          "following_count": Profile.following_count,
          "username": Profile.username}
@@ -18,7 +18,7 @@ def safe(v):
             v = "'" + v
     return v
 
-def type(is_follower, is_following):
+def tipo(is_follower, is_following):
     """Relação do perfil com o dono do pedido, em uma coluna legível no backup."""
     if is_follower and is_following:
         return "ambos"
@@ -29,7 +29,7 @@ def type(is_follower, is_following):
     return ""
 
 def row(profile, is_follower, is_following):
-    return [safe(x) for x in (profile.username, type(is_follower, is_following),
+    return [safe(x) for x in (profile.username, tipo(is_follower, is_following),
                               profile.profile_url, profile.followers_count,
                               profile.following_count, profile.bio, profile.status)]
 

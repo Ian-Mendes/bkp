@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .auth import router as auth_router, current_user
 from .db import Base, engine, get_db
-from .models import Order, Profile, User
+from .models import Order, Profile, TakeoutEntry, User
 from .importer import ExportError
 from .services import (create_order_from_zip, delete_orders, retention_days,
                        run_enrichment, purge_expired_orders)
@@ -26,6 +26,9 @@ ENABLE_DOCS = os.getenv("ENABLE_DOCS", "0" if PRODUCTION else "1") == "1"
 @asynccontextmanager
 async def lifespan(app):
     Base.metadata.create_all(engine)   # dev; Alembic mais tarde
+    # profiles virou tabela global (sem order_id, username UNIQUE) e takeout_entries
+    # é nova mudança destrutiva. Sem Alembic (#26), recrie em dev com
+    # `docker compose down -v` — nenhum ALTER pontual migra a relação antiga.
     if engine.dialect.name == "postgresql":
         # create_all não altera tabelas existentes; contas anteriores à verificação ficam como confirmadas
         with engine.begin() as conn:
@@ -36,13 +39,6 @@ async def lifespan(app):
             # NOVO: token_version para revogação em massa (logout/troca de senha)
             conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                               "token_version INTEGER NOT NULL DEFAULT 0"))
-            # NOVO: enriquecimento Apify (issue #13): link, origem e data da consulta
-            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
-                              "profile_url VARCHAR(255)"))
-            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
-                              "enrich_source VARCHAR(30)"))
-            conn.execute(text("ALTER TABLE profiles ADD COLUMN IF NOT EXISTS "
-                              "enriched_at TIMESTAMPTZ"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     scheduler = BackgroundScheduler()
     # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)
@@ -163,7 +159,9 @@ def upload_config(user: User = Depends(current_user)):
 @app.get("/orders/{order_id}")
 def get_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _get_order(db, order_id, user)
-    rows = db.execute(select(Profile.status, func.count()).where(Profile.order_id == order_id)
+    rows = db.execute(select(Profile.status, func.count(func.distinct(Profile.id)))
+                      .join(TakeoutEntry, TakeoutEntry.username == Profile.username)
+                      .where(TakeoutEntry.order_id == order_id)
                       .group_by(Profile.status)).all()
     return {"order_id": str(order.id), "status": order.status,
             "followers": order.followers_total, "following": order.following_total,
@@ -197,7 +195,7 @@ def export_csv(order_id: uuid.UUID,
                user: User = Depends(current_user),
                db: Session = Depends(get_db)):
     _get_order(db, order_id, user)
-    profiles = db.scalars(exporter.query_profiles(order_id, sort_by, direction, q)).all()
+    profiles = db.execute(exporter.query_profiles(order_id, sort_by, direction, q)).all()
     return Response(exporter.to_csv(profiles), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="backup_enriquecido.csv"'})
 
@@ -209,7 +207,7 @@ def export_xlsx(order_id: uuid.UUID,
                 user: User = Depends(current_user),
                 db: Session = Depends(get_db)):
     order = _get_order(db, order_id, user)
-    profiles = db.scalars(exporter.query_profiles(order_id, sort_by, direction, q)).all()
+    profiles = db.execute(exporter.query_profiles(order_id, sort_by, direction, q)).all()
     data = exporter.to_xlsx(profiles, exporter.build_report(db, order))
     return Response(data,
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

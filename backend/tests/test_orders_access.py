@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func
 from app import services
-from app.models import Order, Profile
+from app.models import Order, Profile, TakeoutEntry
 from tests.helpers import make_zip, register, upload, OLD, NEW
 
 def _make_order(env, email):
@@ -30,7 +30,9 @@ def test_excluir_pedido(env):
     assert client.delete(f"/orders/{oid}", headers=h).status_code == 204
     assert client.get(f"/orders/{oid}", headers=h).status_code == 404
     with Session() as db:
-        assert db.scalar(select(func.count()).select_from(Profile)) == 0
+        # perfis enriquecidos são globais: permanecem após excluir o pedido
+        assert db.scalar(select(func.count()).select_from(Profile)) == 2
+        assert db.scalar(select(func.count()).select_from(TakeoutEntry)) == 0
 
 def test_nao_exclui_em_processamento(env):
     client, Session, tmp = env
@@ -50,3 +52,17 @@ def test_retencao_apaga_pedidos_antigos(env):
     assert services.purge_expired_orders() == 1
     assert client.get(f"/orders/{oid}", headers=h).status_code == 404
     assert client.get(f"/orders/{oid2}", headers=h2).status_code == 200
+
+
+def test_retencao_mantem_perfis(env):
+    """Retenção limpa a relação (pedido + entries), mas mantém os perfis enriquecidos."""
+    client, Session, tmp = env
+    h, oid = _make_order(env, "ana@empresa.com.br")
+    with Session() as db:
+        db.get(Order, uuid.UUID(oid)).created_at = datetime.now(timezone.utc) - timedelta(days=400)
+        db.commit()
+    assert services.purge_expired_orders() == 1
+    with Session() as db:
+        assert db.scalar(select(func.count()).select_from(Order)) == 0
+        assert db.scalar(select(func.count()).select_from(TakeoutEntry)) == 0
+        assert db.scalar(select(func.count()).select_from(Profile)) == 2  # perfis permanecem

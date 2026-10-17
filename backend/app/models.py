@@ -30,13 +30,18 @@ class Order(Base):
     duplicate_count: Mapped[int] = mapped_column(Integer, default=0)
     info: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    profiles: Mapped[list["Profile"]] = relationship(back_populates="order", cascade="all, delete-orphan")
+    entries: Mapped[list["TakeoutEntry"]] = relationship(back_populates="order", cascade="all, delete-orphan")
 
 class Profile(Base):
+    """Perfil enriquecido, global e agnóstico: independe do pedido.
+
+    A chave natural é o `username` (vindo do Takeout). A relação de um pedido
+    com este perfil fica em `TakeoutEntry` e expira na retenção; o perfil
+    permanece para reuso já que se basea em dados públicos.
+    """
     __tablename__ = "profiles"
-    __table_args__ = (UniqueConstraint("order_id", "username"),)
+    __table_args__ = (UniqueConstraint("username"),)
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
     username: Mapped[str] = mapped_column(String(30))
     followers_count: Mapped[int | None] = mapped_column(Integer)
     following_count: Mapped[int | None] = mapped_column(Integer)
@@ -45,4 +50,18 @@ class Profile(Base):
     enrich_source: Mapped[str | None] = mapped_column(String(30))  # provider que consultou
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="pending")
-    order: Mapped[Order] = relationship(back_populates="profiles")
+
+
+class TakeoutEntry(Base):
+    """Relação de um pedido com um perfil (seguidor/eu sigo), vinda do Takeout.
+
+    Um usuário nas duas listas gera duas linhas (follower + following). Expira
+    com a retenção do pedido; o `Profile` correspondente permanece.
+    """
+    __tablename__ = "takeout_entries"
+    __table_args__ = (UniqueConstraint("order_id", "username", "relation"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"), index=True)
+    username: Mapped[str] = mapped_column(String(30), ForeignKey("profiles.username", ondelete="CASCADE"), index=True)
+    relation: Mapped[str] = mapped_column(String(20))   # "follower" | "following"
+    order: Mapped[Order] = relationship(back_populates="entries")

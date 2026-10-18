@@ -25,6 +25,9 @@ export default function Dashboard() {
   const chooser = useRef(null);
   const pending = useRef(false);
   const result = useRef(null);
+  const [profiles, setProfiles] = useState(null);
+  const [profileTotal, setProfileTotal] = useState(null);
+  const [profileError, setProfileError] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -47,6 +50,27 @@ export default function Dashboard() {
   useEffect(() => {
     if (order) result.current?.focus();
   }, [order]);
+
+  useEffect(() => {
+    let active = true;
+    async function loadProfiles() {
+      if (!order?.order_id) return;
+      try {
+        const data = await authenticatedApi(`/orders/${order.order_id}/profiles?limit=50&offset=0`);
+        if (!active) return;
+        setProfiles(data.profiles);
+        setProfileTotal(data.total);
+        setProfileError("");
+      } catch (err) {
+        if (!active) return;
+        setProfiles(null);
+        setProfileTotal(null);
+        setProfileError(err.status === 401 ? "Sessão expirada. Entre novamente." : err.message);
+      }
+    }
+    loadProfiles();
+    return () => { active = false; };
+  }, [order?.order_id]);
 
   function selectFiles(files) {
     if (pending.current) return;
@@ -158,6 +182,19 @@ export default function Dashboard() {
           <p>Estado do pedido: {order.status === "parsed" ? "analisado" : order.status}. O recebimento não conclui o enriquecimento, que é uma etapa separada. No MVP, o provider não consulta novos dados.</p>
           {order.warnings?.length > 0 && <p>A análise apontou possíveis lacunas na exportação. Confira se você incluiu seguidores e seguindo de todo o período.</p>}
         </section>}
+        {profiles && (
+          <div>
+            <p>Prévia — total: {profileTotal}</p>
+            <ul>
+              {profiles.map((p) => (
+                <li key={p.username}>
+                  {p.username} | {p.tipo} | {p.status} | followers: {p.followers_count ?? "∅"} | following: {p.following_count ?? "∅"} | {p.bio ?? "∅"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {profileError && <p>{profileError}</p>}
         {user && <div className="dashboard-actions">
           <button id="out" className="out" disabled={busy || loggingOut} onClick={logout}>{loggingOut ? "Saindo…" : "Sair"}</button>
         </div>}

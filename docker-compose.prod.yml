@@ -11,6 +11,13 @@ services:
     volumes: !override
       - uploads:/data/uploads
 
+  worker:
+    build: !reset null
+    image: ghcr.io/ian-mendes/bkp/api:${IMAGE_TAG:-main}
+    command: celery -A app.worker worker --loglevel=info --concurrency=2
+    volumes: !override
+      - uploads:/data/uploads
+
   web:
     build: !reset null
     image: ghcr.io/ian-mendes/bkp/web:${IMAGE_TAG:-main}

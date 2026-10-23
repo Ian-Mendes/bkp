@@ -14,6 +14,7 @@ from .importer import ExportError
 from .services import (create_order_from_zip, delete_orders, retention_days,
                        run_enrichment, purge_expired_orders)
 from . import exporter, rate
+from .worker import process_order
 
 UPLOAD_DIR = "/data/uploads"
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "200"))
@@ -170,9 +171,17 @@ def start_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Ses
     order = _get_order(db, order_id, user)
     if order.status not in ("parsed", "failed"):
         raise HTTPException(409, f"Pedido em estado '{order.status}'")
-    status = run_enrichment(str(order.id))
-    return {"order_id": str(order.id), "status": status}
-
+    order.status = "queued"
+    db.commit()
+    try:
+        process_order.delay(str(order.id))
+    except Exception:
+        # Redis indisponível ou erro de enfileiramento: volta para `parsed` para
+        # permitir novo start sem deixar o pedido preso em `queued`.
+        order.status = "parsed"
+        db.commit()
+        raise HTTPException(503, "Fila indisponível. Tente novamente em instantes.")
+    return {"order_id": str(order.id), "status": "queued"}
 @app.delete("/orders/{order_id}", status_code=204)
 def delete_order(order_id: uuid.UUID, user: User = Depends(current_user), db: Session = Depends(get_db)):
     order = _get_order(db, order_id, user)

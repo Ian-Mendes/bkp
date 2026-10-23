@@ -3,7 +3,7 @@ uvicorn[standard]
 sqlalchemy
 alembic
 psycopg[binary]
-# celery[redis]  # reativar ao reintroduzir a fila (provider real de enriquecimento)
+celery[redis]
 apscheduler
 python-multipart
 pydantic-settings

@@ -680,7 +680,7 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Confirmação de e-mail e recuperação de senha
 - [x] Frontend: login, cadastro e recuperação de senha
 - [x] **Integração com provedor de enriquecimento (Apify)** — implementado, inativo por padrão (`PROVIDER=null`); ativação com token (#22) e escala com fila (#14)
-- [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
+- [x] Fila assíncrona (Celery + Redis)
 - [x] Frontend: upload do ZIP
 - [ ] Frontend: lista de pedidos e downloads
 - [x] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)

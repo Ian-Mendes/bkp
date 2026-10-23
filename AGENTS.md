@@ -34,7 +34,8 @@ real ainda é um stub (`NullProvider`); sem fila (Celery/Redis) no MVP.
   provider real (Apify) chegar. Não remova.
 
 ## Ambiente
-
+- **Alembic:** o banco é versionado em `backend/alembic/`. Em dev, se o
+  schema estiver desatualizado, `docker compose exec api alembic upgrade head`.
 - `cp .env.example .env`.
 - `JWT_SECRET` com ≥ 32 caracteres (validado no import do backend).
 - `POSTGRES_PASSWORD` idêntica à senha dentro de `DATABASE_URL` (o Postgres só lê a senha ao criar o volume).
@@ -95,13 +96,17 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
   (responder 404, nunca 403); teste em `tests/`.
 - **Novo provider:** `fetch(username) -> ProfileResult`, registre em
   `get_provider()`, teste com `fetch` mockado.
-- **Mudança de schema:** sem Alembic — atualize `models.py` **e** o `ALTER
-  TABLE` manual em `main.py` (lifespan). `create_all` não altera tabelas
-  existentes.
-
+- **Mudança de schema:** edite `models.py`, rode `docker compose exec api
+  alembic revision --autogenerate -m "descrição curta"`, revise o arquivo em
+  `backend/alembic/versions/` (o autogenerate erra defaults, FKs e enums com
+  frequência) e aplique com `docker compose exec api alembic upgrade head`.
+  Nunca use `create_all` nem `ALTER TABLE` manual em `main.py`.
 ## Armadilhas
 
-- Sem Alembic; `create_all` não altera tabelas existentes.
+- **Alembic:** o schema é versionado. Mudanças em `models.py` exigem uma
+  revisão (`alembic revision --autogenerate`) + `alembic upgrade head`. Sem
+  `create_all` no boot. O banco de dev pode ser recriado com `docker compose
+  down -v` para aplicar do zero.
 - `.env` exige `docker compose up -d --force-recreate` para reler.
 - Rate limit é em memória (`rate.py`): zera no restart e não é compartilhado
   entre réplicas (single-instance). Idem o agendador de retenção (APScheduler).

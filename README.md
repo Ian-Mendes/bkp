@@ -683,7 +683,7 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [ ] Fila assíncrona (reintroduzir Celery/Redis com o provider real)
 - [x] Frontend: upload do ZIP
 - [ ] Frontend: lista de pedidos e downloads
-- [ ] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)
+- [x] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)
 - [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)
 - [ ] Deploy em staging/produção (provedor: Vultr; aguardando provisionamento do servidor)

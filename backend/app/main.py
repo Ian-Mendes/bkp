@@ -4,11 +4,11 @@ from datetime import timedelta
 from typing import Literal
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, Request, Response, Query
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from .auth import router as auth_router, current_user
-from .db import Base, engine, get_db
+from .db import get_db
 from .models import Order, Profile, TakeoutEntry, User
 from .importer import ExportError
 from .services import (create_order_from_zip, delete_orders, retention_days,
@@ -25,20 +25,6 @@ ENABLE_DOCS = os.getenv("ENABLE_DOCS", "0" if PRODUCTION else "1") == "1"
 
 @asynccontextmanager
 async def lifespan(app):
-    Base.metadata.create_all(engine)   # dev; Alembic mais tarde
-    # profiles virou tabela global (sem order_id, username UNIQUE) e takeout_entries
-    # é nova mudança destrutiva. Sem Alembic (#26), recrie em dev com
-    # `docker compose down -v` — nenhum ALTER pontual migra a relação antiga.
-    if engine.dialect.name == "postgresql":
-        # create_all não altera tabelas existentes; contas anteriores à verificação ficam como confirmadas
-        with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                              "email_verified BOOLEAN NOT NULL DEFAULT TRUE"))
-            # contas novas nascem não confirmadas (mesmo default de um banco criado do zero)
-            conn.execute(text("ALTER TABLE users ALTER COLUMN email_verified SET DEFAULT FALSE"))
-            # NOVO: token_version para revogação em massa (logout/troca de senha)
-            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                              "token_version INTEGER NOT NULL DEFAULT 0"))
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     scheduler = BackgroundScheduler()
     # single-instance: cada worker do uvicorn rodaria o próprio agendador (purga é idempotente)
@@ -48,7 +34,6 @@ async def lifespan(app):
         yield
     finally:
         scheduler.shutdown(wait=False)
-
 app = FastAPI(
     title="Backup enriquecido", lifespan=lifespan,
     docs_url="/docs" if ENABLE_DOCS else None,

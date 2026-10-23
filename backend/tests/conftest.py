@@ -3,8 +3,7 @@ import os
 # Variáveis de ambiente para testes (executados fora do Docker)
 os.environ.setdefault("JWT_SECRET", "segredo-de-teste-apenas-para-pytest-0123456789")
 os.environ.setdefault("DATABASE_URL", "sqlite://")   # <-- ADICIONADO
-# REDIS_URL era necessário p/ importar o worker (Celery); reativar ao reintroduzir a fila
-# os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -31,6 +30,24 @@ def fake_email(monkeypatch):
     OUTBOX.clear()
     monkeypatch.setattr(auth, "enqueue_email",
                         lambda bg, to, subject, text: OUTBOX.append((to, subject, text)))
+
+@pytest.fixture(autouse=True)
+def fake_celery(monkeypatch):
+    """Impede que `.delay()` tente conectar no Redis durante os testes.
+
+    Retorna uma lista com os `order_id` enfileirados. Testes que precisam do
+    efeito do enriquecimento chamam `services.run_enrichment` diretamente
+    (padrão já usado em `test_worker_processa_tudo`).
+    """
+    from app import worker
+    enqueued = []
+
+    def fake_delay(order_id):
+        enqueued.append(order_id)
+        return None
+
+    monkeypatch.setattr(worker.process_order, "delay", fake_delay)
+    return enqueued
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):

@@ -7,7 +7,8 @@ e `frontend/AGENTS.md` complementam este arquivo com o que muda em cada lado.
 
 BKP converte a exportação (Takeout) do Instagram em planilha enriquecida
 CSV/XLSX. Backend FastAPI + SQLAlchemy, frontend Vite + React. O enriquecimento
-real ainda é um stub (`NullProvider`); sem fila (Celery/Redis) no MVP.
+real ainda é um stub (`NullProvider`), mas a fila (Celery/Redis) já está ativa:
+o processamento roda no worker `celery -A app.worker worker`.
 
 - Produto e operação: `README.md`. Infra: `docker-compose.yml` (+ `docker-compose.override.yml` em dev).
 - Contribuição: `CONTRIBUTING.md`. Template de PR: `.github/PULL_REQUEST_TEMPLATE.md`.
@@ -28,11 +29,10 @@ real ainda é um stub (`NullProvider`); sem fila (Celery/Redis) no MVP.
   (pasta gitignored) — nunca no repositório.
 - Nunca rode `pytest`/`pip`/`npm` direto na máquina — sempre em container
   (`docker compose exec`).
-- **Exceção temporária:** o código comentado de Celery/Redis em
-  `backend/app/worker.py`, `backend/requirements.txt`, `docker-compose.yml` e
-  `backend/tests/conftest.py` é scaffolding para reintroduzir a fila quando o
-  provider real (Apify) chegar. Não remova.
-
+- **Fila ativa:** Celery + Redis estão em uso (`worker` no `docker-compose.yml`).
+  Tasks pesadas (enriquecimento) rodam no worker; a API só enfileira via
+  `.delay()`. `beat` ainda não está ativo (a purga de retenção continua no
+  `lifespan` do FastAPI).
 ## Ambiente
 - **Alembic:** o banco é versionado em `backend/alembic/`. Em dev, se o
   schema estiver desatualizado, `docker compose exec api alembic upgrade head`.
@@ -101,6 +101,10 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
   `backend/alembic/versions/` (o autogenerate erra defaults, FKs e enums com
   frequência) e aplique com `docker compose exec api alembic upgrade head`.
   Nunca use `create_all` nem `ALTER TABLE` manual em `main.py`.
+- **Nova task Celery:** implemente em `backend/app/worker.py` com `@celery.task`,
+  garanta idempotência (re-execução segura) e defina `soft_time_limit`/`time_limit`.
+  Enfileire com `task.delay(...)` no handler e trate falhas (503 ao cliente).
+
 ## Armadilhas
 
 - **Alembic:** o schema é versionado. Mudanças em `models.py` exigem uma
@@ -110,6 +114,10 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
 - `.env` exige `docker compose up -d --force-recreate` para reler.
 - Rate limit é em memória (`rate.py`): zera no restart e não é compartilhado
   entre réplicas (single-instance). Idem o agendador de retenção (APScheduler).
+- **Worker Celery** e **API** compartilham o mesmo código (`/code`) via bind mount
+  em dev. Em prod, ambos usam a imagem do GHCR (definida em
+  `docker-compose.prod.yml`). `task_acks_late=True` no `celery_app.py` exige que
+  toda task seja idempotente.
 - `PROVIDER` só aceita `null`; `requirements.txt` sem pin.
 - O frontend **não guarda token** no JS: usa cookie httpOnly com `credentials: "include"`.
   Não reintroduza `localStorage` (`bkp_token`) para sessão.

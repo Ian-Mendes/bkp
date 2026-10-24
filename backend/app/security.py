@@ -47,29 +47,14 @@ def decode_token(token: str):
     except (jwt.PyJWTError, KeyError, ValueError):
         return None
 
-VERIFY_EMAIL = "verify_email"
-RESET_PASSWORD = "reset_password"
 REFRESH = "refresh"
 
 def password_fingerprint(password_hash: str) -> str:
     return hashlib.sha256(password_hash.encode()).hexdigest()[:16]
 
-def create_purpose_token(user_id, purpose: str, minutes: int,
-                         fp: str | None = None, ver: int = 0) -> str:
-    exp = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-    payload = {"sub": str(user_id), "exp": exp, "purpose": purpose, "ver": ver}
-    if fp:
-        payload["fp"] = fp
-    return jwt.encode(payload, JWT_SECRET, algorithm=ALGORITHM)
-
-def decode_purpose_token(token: str, purpose: str):
-    try:
-        payload = jwt.decode(token, JWT_SECRET, algorithms=[ALGORITHM])
-        if payload.get("purpose") != purpose:
-            return None
-        return uuid.UUID(payload["sub"]), payload.get("fp"), payload.get("ver", 0)
-    except (jwt.PyJWTError, KeyError, ValueError):
-        return None
+def hash_token(token: str) -> str:
+    """Hash do token de convite (nunca guardamos o token cru)."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
 def create_refresh_token(user_id, ver: int = 0) -> str:
     exp = datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS)

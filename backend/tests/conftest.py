@@ -13,10 +13,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app import main, rate, auth, services
-from tests.helpers import OUTBOX
+from app import main, rate, services
 
-REAL_ENQUEUE = auth.enqueue_email   # a fixture abaixo troca por um fake; os testes de fila usam o real
 from app.db import Base, get_db
 from app.main import app
 
@@ -27,12 +25,6 @@ def fake_rate(monkeypatch):
         counts[key] = counts.get(key, 0) + 1
         return counts[key] <= limit
     monkeypatch.setattr(rate, "hit", hit)
-
-@pytest.fixture(autouse=True)
-def fake_email(monkeypatch):
-    OUTBOX.clear()
-    monkeypatch.setattr(auth, "enqueue_email",
-                        lambda bg, to, subject, text: OUTBOX.append((to, subject, text)))
 
 @pytest.fixture(autouse=True)
 def fake_celery(monkeypatch):

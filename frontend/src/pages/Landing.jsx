@@ -27,14 +27,9 @@ export default function Landing() {
                 Ir para o app
               </button>
             ) : (
-              <>
-                <button className="btn-outline" onClick={() => navigate("/login")}>
-                  Entrar
-                </button>
-                <button className="btn-accent" onClick={() => navigate("/login")}>
-                  Criar conta
-                </button>
-              </>
+              <button className="btn-accent" onClick={() => navigate("/login")}>
+                Entrar
+              </button>
             )}
           </nav>
         </div>
@@ -55,7 +50,7 @@ export default function Landing() {
           </p>
           <div className="hero-cta">
             <button className="btn-accent" onClick={() => navigate(ctaDestino)}>
-              {logado ? "Ir para o app" : "Criar meu backup"}
+              {logado ? "Ir para o app" : "Entrar"}
             </button>
           </div>
         </div>
@@ -233,7 +228,7 @@ export default function Landing() {
           <p>Leva cinco minutos. Não precisa entender de tecnologia.</p>
           <div className="hero-cta">
             <button className="btn-accent" onClick={() => navigate(ctaDestino)}>
-              {logado ? "Ir para o app" : "Criar conta"}
+              {logado ? "Ir para o app" : "Entrar"}
             </button>
           </div>
         </div>

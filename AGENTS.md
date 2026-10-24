@@ -7,8 +7,8 @@ e `frontend/AGENTS.md` complementam este arquivo com o que muda em cada lado.
 
 BKP converte a exportação (Takeout) do Instagram em planilha enriquecida
 CSV/XLSX. Backend FastAPI + SQLAlchemy, frontend Vite + React. O enriquecimento
-real ainda é um stub (`NullProvider`), mas a fila (Celery/Redis) já está ativa:
-o processamento roda no worker `celery -A app.worker worker`.
+usa o provider Apify (`PROVIDER=apify`; `null` por padrão) e roda no worker
+Celery (`celery -A app.worker worker`). Acesso por convite gerado no backoffice.
 
 - Produto e operação: `README.md`. Infra: `docker-compose.yml` (+ `docker-compose.override.yml` em dev).
 - Contribuição: `CONTRIBUTING.md`. Template de PR: `.github/PULL_REQUEST_TEMPLATE.md`.
@@ -56,7 +56,7 @@ Reuse antes de criar: `_get_order` (ownership), `exporter.safe` (células),
 
 ```bash
 docker compose exec api pytest
-docker compose exec api pytest tests/test_auth.py::test_recuperar_senha
+docker compose exec api pytest tests/test_auth.py::test_convite_aceito_autentica_e_login
 docker compose exec api pytest -k importer -q
 ```
 
@@ -82,13 +82,14 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
 
 ## Invariantes de segurança (não regredir)
 
-- Anti-enumeração em `register`/`resend`/`forgot` (mesma resposta, exista ou
-  não o e-mail).
+- Acesso só por convite de uso único (token hasheado, expira em `INVITE_DAYS`);
+  sem auto-cadastro; `accept-invite` devolve a mesma resposta para
+  inválido/expirado/já usado (anti-enumeração).
 - `no-store` em `/auth` e `/orders`; headers de segurança em toda resposta.
 - Isolamento por usuário, rate limit e guardas de ZIP bomb (`importer.py`).
 - Sessão em cookie httpOnly (`bkp_session`) + refresh (`bkp_refresh`); `token_version`
   permite revogação em massa (logout, troca de senha).
-- Tokens de e-mail (verify/reset) não valem como sessão.
+- Token de convite não vale como sessão (só `accept-invite`).
 
 ## Playbooks
 
@@ -118,7 +119,7 @@ Rode `pytest` após qualquer mudança no backend. Não há suíte no frontend.
   em dev. Em prod, ambos usam a imagem do GHCR (definida em
   `docker-compose.prod.yml`). `task_acks_late=True` no `celery_app.py` exige que
   toda task seja idempotente.
-- `PROVIDER` só aceita `null`; `requirements.txt` sem pin.
+- `PROVIDER` aceita `null` ou `apify`; `requirements.txt` sem pin.
 - O frontend **não guarda token** no JS: usa cookie httpOnly com `credentials: "include"`.
   Não reintroduza `localStorage` (`bkp_token`) para sessão.
 

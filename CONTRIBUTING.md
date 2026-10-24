@@ -8,7 +8,7 @@ e propor mudanças.
 1. `cp .env.example .env` e preencha `POSTGRES_PASSWORD`, `DATABASE_URL`
    (senhas idênticas) e um `JWT_SECRET` de 32+ caracteres. O passo a passo
    completo está no `README.md`.
-2. `docker compose up -d --build` — sobe a API (:8000), o Mailpit (:8025) e o
+2. `docker compose up -d --build` — sobe a API (:8000), o worker, o Redis e o
    frontend de dev (:3000, via `docker-compose.override.yml`).
 3. `docker compose exec api pytest` — confirme que o ambiente está saudável.
 

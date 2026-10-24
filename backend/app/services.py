@@ -1,21 +1,66 @@
-"""Regras de negócio: pedidos (criação, análise, enriquecimento) e retenção."""
-import os, uuid
+"""Regras de negócio: convites de acesso, pedidos e retenção."""
+import os, secrets, uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select, or_
 from .db import SessionLocal
 from .importer import parse_export
-from .models import Order, Profile, TakeoutEntry
+from .models import Invite, Order, Profile, TakeoutEntry, User
 from .providers import get_provider
+from .security import hash_password, hash_token
 
 WINDOW_DAYS = 380   # ~1 ano: indício de filtro de período no export
 ENRICH_CACHE_DAYS = 7   # reusa perfil "ok" enriquecido há menos de uma semana
 ENRICH_BATCH_SIZE = 25   # usernames por run do Apify (o actor aceita lista)
+INVITE_DAYS = int(os.getenv("INVITE_DAYS", "7"))   # validade do convite de acesso (dias)
 
 def retention_days() -> int:
     return int(os.getenv("RETENTION_DAYS", "30"))
 
 def _iso(ts):
     return datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+
+def create_invite(db, email: str) -> str | None:
+    """Cria (ou renova) o convite de um e-mail; devolve o token cru do link.
+
+    Re-convidar um e-mail pendente regenera o token (o link antigo morre).
+    E-mail que já tem conta ativa não é convidado (devolve None).
+    """
+    email = email.lower()
+    if db.scalar(select(User).where(User.email == email)) is not None:
+        return None
+    token = secrets.token_urlsafe(32)
+    inv = db.scalar(select(Invite).where(Invite.email == email))
+    if inv is None:
+        inv = Invite(email=email, token_hash=hash_token(token),
+                     expires_at=datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS))
+        db.add(inv)
+    else:
+        inv.token_hash = hash_token(token)
+        inv.expires_at = datetime.now(timezone.utc) + timedelta(days=INVITE_DAYS)
+        inv.used_at = None
+    db.commit()
+    return token
+
+def accept_invite(db, token: str, password: str) -> User | None:
+    """Consome o convite (uso único) e cria o usuário; devolve o User ou None.
+
+    Inválido/expirado/já usado devolve None (mesma resposta, sem vazar qual).
+    """
+    now_ = datetime.now(timezone.utc)
+    inv = db.scalar(
+        select(Invite).where(
+            Invite.token_hash == hash_token(token),
+            Invite.used_at.is_(None),
+            Invite.expires_at > now_,
+        )
+    )
+    if inv is None:
+        return None
+    inv.used_at = now_
+    user = User(email=inv.email, password_hash=hash_password(password))
+    db.add(user)
+    db.commit()
+    return user
 
 def analyze(parsed, expected_followers=None, expected_following=None):
     ranges = {}

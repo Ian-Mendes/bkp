@@ -21,8 +21,8 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Normalização e deduplicação | ✅ Funcionando |
 | Análise de integridade (janelas, cobertura) | ✅ Funcionando |
 | Autenticação (JWT + Argon2) | ✅ Funcionando |
-| Confirmação de e-mail e recuperação de senha | ✅ Funcionando (Mailpit em dev) |
-| Frontend: login, cadastro, confirmação e recuperação de senha | ✅ Funcionando |
+| Convite de acesso (backoffice, sem e-mail) | ✅ Funcionando |
+| Frontend: login e aceite de convite | ✅ Funcionando |
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
 | Sessão em cookie httpOnly + refresh | ✅ Implementado |
@@ -49,7 +49,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 **Infraestrutura**
 - Docker + Docker Compose
 - Armazenamento privado de arquivos (volume local; S3 na produção)
-- Mailpit (SMTP de desenvolvimento, captura os e-mails)
+- Sem e-mail: convites de acesso gerados por comando de backoffice
 - Caddy (gateway de produção, perfil `prod`; em dev o Vite serve o frontend)
 
 **Frontend**
@@ -63,7 +63,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 bkp/
 ├── README.md
 ├── CONTRIBUTING.md
-├── docker-compose.yml          # db, mailpit, api (+ perfil prod com Caddy)
+├── docker-compose.yml          # db, redis, api, worker (+ perfil prod com Caddy)
 ├── docker-compose.override.yml # dev: sobe o frontend (Vite) com hot reload
 ├── .env.example
 ├── .github/
@@ -91,9 +91,9 @@ bkp/
     │   ├── services.py         # Regras de negócio (enriquecimento síncrono)
     │   ├── exporter.py         # CSV/XLSX + anti-injeção
     │   ├── models.py           # SQLAlchemy
-    │   ├── auth.py             # Cadastro, login, confirmação de e-mail, recuperação de senha
-    │   ├── security.py         # Hash + JWT (sessão e tokens de e-mail)
-    │   ├── mailer.py           # Envio SMTP
+    │   ├── auth.py             # Convite (aceite), login, sessão e revogação
+    │   ├── invite.py           # Comando de backoffice: gera links de convite
+    │   ├── security.py         # Argon2 + JWT (sessão e refresh) + hash de convite
     │   ├── rate.py             # Rate limiting (em memória)
     │   └── providers/          # Fontes de enriquecimento
     │       ├── base.py
@@ -213,14 +213,13 @@ Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
 
 | # | Comando | Resultado esperado |
 |---|---------|--------------------|
-| 1 | `docker compose ps` | 4 serviços `Up` (`api`, `db`, `mailpit`, `frontend`); `db` e `mailpit` com `(healthy)` |
+| 1 | `docker compose ps` | 5 serviços `Up` (`api`, `db`, `redis`, `worker`, `frontend`); `db` com `(healthy)` |
 | 2 | `docker compose logs api --tail 20` | Termina com `Application startup complete` e **sem** traceback |
 | 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
 | 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
-| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`, `takeout_entries`), provando que o banco aceita a senha |
+| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `invites`, `orders`, `profiles`, `takeout_entries`), provando que o banco aceita a senha |
 | 6 | `docker compose exec api pytest` | Todos os testes passam |
 | 7 | Abrir http://localhost:3000 | Tela de login do frontend |
-| 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
 
 > ⚠️ **O `pytest` passar não prova que o banco está conectado.** Os testes passam mesmo
 > quando a API não consegue autenticar no Postgres. Sempre confirme também os passos
@@ -232,14 +231,19 @@ Serviços e portas (todos só em localhost):
 |---------|-----|
 | Frontend | http://localhost:3000 |
 | API (Swagger em `/docs`, só em desenvolvimento) | http://localhost:8000 |
-| Mailpit (e-mails capturados) | http://localhost:8025 |
 
-### 6. Criar a primeira conta
 
-1. Abra http://localhost:3000 e cadastre-se.
-2. Abra o Mailpit (http://localhost:8025) e clique no link de confirmação.
-3. Na tela que abrir, informe a **senha do cadastro** para ativar a conta.
-4. Faça login.
+### 6. Criar o primeiro convite e ativar a conta
+
+1. Gere um convite pelo comando de backoffice:
+
+   ```bash
+   docker compose exec api python -m app.invite voce@exemplo.com
+   ```
+
+2. O comando imprime um link de uso único (ex.: `http://localhost:3000/invite/<token>`).
+   Envie esse link para a pessoa, fora da aplicação.
+3. Ao abrir o link, a pessoa define a senha e já entra no painel (sem verificação por e-mail).
 
 ---
 
@@ -331,7 +335,7 @@ Atalhos para os comandos mais comuns (tudo em container; nunca `pytest`/`pip`/`n
 ## Resetar os Dados
 
 ```bash
-# Apagar tudo (banco, uploads e e-mails do Mailpit)
+# Apagar tudo (banco e uploads)
 docker compose down -v && docker compose up -d
 
 # Só usuários, pedidos e perfis (e as relações do takeout)
@@ -344,16 +348,32 @@ docker compose restart api
 
 ---
 
-## Testar Confirmação de E-mail e Recuperação de Senha
+## Testar o convite de acesso
 
-Em desenvolvimento nenhum e-mail sai de verdade. Cadastre-se em http://localhost:3000 e abra
-o Mailpit em http://localhost:8025 para clicar no link recebido.
+Não há e-mail: o acesso é por convite gerado no backoffice.
 
-- **Confirmação:** o link abre `/verify-email`, que pede a **senha do cadastro** para ativar a conta.
-- **Recuperação:** em "Esqueci minha senha" informe o e-mail; o link do Mailpit vale 30 min e só funciona uma vez.
-- **Não chegou e-mail?** Veja `docker compose logs api --tail 30` (o envio roda em `BackgroundTasks`, depois da resposta).
-- Cada fluxo (cadastro, reenvio, recuperação) envia no máximo 6 e-mails por hora para o mesmo endereço.
-- O login só funciona depois de confirmar o e-mail.
+```bash
+# Gera um link de uso único (válido por INVITE_DAYS, padrão 7 dias)
+docker compose exec api python -m app.invite voce@exemplo.com
+
+# Valida o convite antes de mostrar o formulário de senha
+curl -i http://localhost:8000/auth/invite/<token>
+```
+
+**Convidar vários usuários (lote):** leia de um arquivo com um e-mail por linha
+(linhas em branco são ignoradas). O `-T` desativa o TTY para o stdin funcionar.
+
+```bash
+# Imprime um link por e-mail
+docker compose exec -T api python -m app.invite < emails.txt
+
+# Salvar os links em um arquivo
+docker compose exec -T api python -m app.invite < emails.txt > convites.txt
+```
+
+- O link é de uso único e expira em 7 dias; re-convidar o mesmo e-mail regenera o link (o antigo morre).
+- E-mail que já tem conta ativa é ignorado (imprime `já tem conta ativa — ignorado`).
+- Definir a senha (`/auth/accept-invite`) já autentica: o usuário cai direto no painel.
 
 ---
 
@@ -385,14 +405,9 @@ PROVIDER=null          # null | apify
 APIFY_TOKEN=           # preencher quando implementar
 APIFY_ACTOR_ID=apify/instagram-profile-scraper
 
-# E-mail (dev: Mailpit; em produção use um provedor SMTP real)
-FRONTEND_URL=http://localhost:3000   # base dos links enviados por e-mail
-SMTP_HOST=mailpit
-SMTP_PORT=1025
-SMTP_USER=
-SMTP_PASSWORD=
-SMTP_STARTTLS=0                      # 1 em provedores com STARTTLS
-MAIL_FROM=BKP <no-reply@bkp.local>
+# Convite de acesso (base do link gerado pelo backoffice; sem e-mail)
+FRONTEND_URL=http://localhost:3000
+INVITE_DAYS=7                        # validade do convite em dias
 
 # Segurança / produção
 APP_ENV=development        # production: ativa HSTS e desativa /docs (a menos que ENABLE_DOCS=1)
@@ -401,7 +416,7 @@ UPLOADS_PER_HOUR=10        # envios de ZIP por usuário por hora
 MAX_ORDERS_PER_USER=20     # pedidos guardados por usuário
 ```
 
-Os valores de e-mail e de segurança têm padrão no código (Mailpit, desenvolvimento); só precisam estar no `.env` para mudar.
+Os valores de segurança têm padrão no código; só precisam estar no `.env` para mudar.
 
 O frontend chama a API pela mesma origem (`/api`), encaminhada pelo proxy
 (Vite em dev, Caddy em produção) — sem variável a configurar; ver `frontend/.env.example`.
@@ -414,17 +429,16 @@ e gere um `JWT_SECRET` e uma senha de banco diferentes para cada ambiente, princ
 ## Fluxo de Uso da API
 
 ```bash
-# 1. Registrar (envia um e-mail de confirmação; não devolve token)
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"voce@exemplo.com","password":"senha-bem-longa-123"}'
+# 1. Criar convite (backoffice; imprime o link de uso único)
+docker compose exec api python -m app.invite voce@exemplo.com
 
-# 2. Confirmar o e-mail (token do link recebido, em dev veja no Mailpit, e a senha do cadastro)
-curl -X POST http://localhost:8000/auth/verify-email \
+# 2. Aceitar o convite definindo a senha (já autentica)
+curl -X POST http://localhost:8000/auth/accept-invite \
   -H "Content-Type: application/json" \
   -d '{"token":"...","password":"senha-bem-longa-123"}'
+TOKEN="..."
 
-# 3. Fazer login (guarda o token). Sem confirmar o e-mail, retorna 403.
+# 3. (Opcional) Login para renovar/recuperar a sessão
 curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"voce@exemplo.com","password":"senha-bem-longa-123"}'
@@ -460,20 +474,7 @@ curl -o backup.csv  http://localhost:8000/orders/$ORDER_ID/export.csv  -H "Autho
 curl -o backup.xlsx http://localhost:8000/orders/$ORDER_ID/export.xlsx -H "Authorization: Bearer $TOKEN"
 ```
 
-Recuperação de senha:
-
-```bash
-# Pede o link (resposta sempre igual, exista ou não o e-mail)
-curl -X POST http://localhost:8000/auth/forgot-password \
-  -H "Content-Type: application/json" -d '{"email":"voce@exemplo.com"}'
-
-# Define a nova senha com o token do link (mínimo 10 caracteres)
-curl -X POST http://localhost:8000/auth/reset-password \
-  -H "Content-Type: application/json" \
-  -d '{"token":"...","password":"nova-senha-bem-longa-456"}'
-```
-
-Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confirmado, `413` corpo grande demais,
+Códigos úteis: `401` token inválido ou senha errada, `413` corpo grande demais,
 `429` limite de tentativas, `409` limite de pedidos guardados por usuário.
 
 ---
@@ -483,12 +484,9 @@ Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confir
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/health` | Health check |
-| POST | `/auth/register` | Cadastro (envia e-mail de confirmação; não devolve token) |
-| POST | `/auth/verify-email` | Confirma o e-mail (token do link + senha do cadastro) |
-| POST | `/auth/resend-verification` | Reenvia a confirmação |
-| POST | `/auth/login` | Login (403 se o e-mail não foi confirmado) |
-| POST | `/auth/forgot-password` | Envia link de redefinição de senha |
-| POST | `/auth/reset-password` | Define a nova senha com o token do link |
+| POST | `/auth/accept-invite` | Aceita o convite (define senha) e autentica |
+| GET | `/auth/invite/{token}` | Valida o convite e devolve o e-mail |
+| POST | `/auth/login` | Login |
 | GET | `/auth/me` | Dados do usuário |
 | POST | `/auth/refresh` | Renova o access token a partir do refresh cookie |
 | POST | `/auth/logout` | Invalida os cookies de sessão e refresh |
@@ -548,12 +546,10 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 **Contas e sessões**
 - ✅ Hash de senha com Argon2id.
 - ✅ Limite de tentativas de login (rate limit em memória).
-- ✅ Confirmação de e-mail obrigatória para entrar (link válido por 24 h) e exige a senha do cadastro, o que impede o pré-sequestro de conta por quem cadastrou o e-mail alheio.
-- ✅ Link de redefinição de senha válido por 30 min e de uso único.
+- ✅ Acesso só por convite de uso único (token hasheado, expira em `INVITE_DAYS`); sem auto-cadastro.
+- ✅ `accept-invite` com rate limit por IP; inválido/expirado/já usado devolve a mesma resposta (sem vazar qual).
 - ✅ Trocar a senha (ou fazer logout) derruba as sessões abertas via `token_version`.
 - ✅ Sessão em cookie httpOnly (`bkp_session`) com refresh token (`bkp_refresh`); `token_version` permite revogação em massa.
-- ✅ Cadastro, reenvio e recuperação não revelam se o e-mail está cadastrado (mesma resposta; quem já tem conta recebe um aviso por e-mail).
-- ✅ Teto de 6 e-mails por hora por destinatário em cada fluxo, independente do IP.
 
 **API e uploads**
 - ✅ Cabeçalhos de segurança na API e no frontend (CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy: no-referrer`; HSTS com `APP_ENV=production`).
@@ -567,7 +563,6 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - ⚠️ Limite de corpo no proxy (`request_body max_size` no `Caddyfile`): corpos *chunked* não trazem `Content-Length`.
 - ⚠️ Rate limit em memória e agendador de retenção são single-instance: mover para Redis/fila ao escalar para várias réplicas.
 - ⚠️ Versões fixas das dependências (`requirements.txt` sem pin).
-- ⚠️ Cadastro pendente pode ser sobrescrito por terceiros (só atrapalha, não dá acesso); o desenho definitivo guarda o pendente em tabela própria.
 
 > O envio de uma exportação pelo cliente **não concede automaticamente**
 > permissão para uso posterior dos dados de terceiros. Base legal e
@@ -607,8 +602,8 @@ o que já existe e o que falta para subir em staging/produção.
   `secure=True` e a API ativa HSTS. No `Caddyfile`, troque `:80` pelo domínio
   real (ex.: `backup.exemplo.com`) para ativar o TLS automático do Caddy.
 - **Segredos por ambiente**: gere `JWT_SECRET` e `POSTGRES_PASSWORD` distintos
-  para cada ambiente (nunca reuse o de desenvolvimento). Configure um SMTP real
-  (SPF/DKIM) e `FRONTEND_URL` com o domínio público.
+  para cada ambiente (nunca reuse o de desenvolvimento) e aponte `FRONTEND_URL`
+  para o domínio público (base dos links de convite).
 - **Uma réplica só (por ora)**: o rate limit (`rate.py`) e o agendador de
   retenção (APScheduler) são em memória/single-instance. Não escale para mais de
   uma réplica até a fila Redis voltar (Issue #11).
@@ -636,7 +631,7 @@ Enquanto esses secrets não existirem, o job fica **inerte** (o passo é pulado)
 1. `docker login ghcr.io -u SEU_USUARIO -p SEU_PAT` — o PAT precisa de
    `read:packages` para `ghcr.io/ian-mendes/bkp/*` (ou torne o pacote público).
 2. Clone o repositório em `DEPLOY_PATH` e crie o `.env` de produção
-   (`APP_ENV=production`, `JWT_SECRET` e `POSTGRES_PASSWORD` próprios, SMTP real,
+   (`APP_ENV=production`, `JWT_SECRET` e `POSTGRES_PASSWORD` próprios,
    `FRONTEND_URL` com o domínio).
 3. Aponte o DNS do domínio ao IP do VPS e ajuste o `Caddyfile` para o domínio.
 
@@ -677,18 +672,17 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Parser JSON + HTML
 - [x] Autenticação e isolamento
 - [x] Exportação CSV/XLSX
-- [x] Confirmação de e-mail e recuperação de senha
-- [x] Frontend: login, cadastro e recuperação de senha
+- [x] Convite de acesso (backoffice, sem e-mail)
+- [x] Frontend: login e aceite de convite
 - [x] **Integração com provedor de enriquecimento (Apify)** — implementado, inativo por padrão (`PROVIDER=null`); ativação com token (#22) e escala com fila (#14)
 - [x] Fila assíncrona (Celery + Redis)
 - [x] Frontend: upload do ZIP
-- [ ] Frontend: lista de pedidos e downloads
+- [x] Frontend: lista de pedidos e downloads
 - [x] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)
-- [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)
 - [ ] Deploy em staging/produção (provedor: Vultr; aguardando provisionamento do servidor)
 - [x] Sessão em cookie `httpOnly`, logout e revogação de sessão
-- [ ] Cadastro pendente em tabela própria
+- [x] Cadastro pendente em tabela própria (tabela `invites`)
 - [ ] Página reserva (backup de perfil)
 - [ ] CRM leve
 - [ ] Agentes de IA para classificação de bios

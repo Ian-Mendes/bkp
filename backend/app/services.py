@@ -1,6 +1,7 @@
 """Regras de negócio: convites de acesso, pedidos e retenção."""
 import os, secrets, uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from sqlalchemy import delete, select, or_
 from .db import SessionLocal
 from .importer import parse_export
@@ -118,16 +119,36 @@ def delete_orders(db, order_ids):
     return len(order_ids)
 
 
+def _safe_url(value):
+    """URLs para `href`: só http/https passam; o resto vira None (anti-XSS).
+
+    `external_url`, `profile_url` e `profile_pic_url` vêm de um provider
+    (Apify) e são renderizadas em `href` na prévia do frontend. Esquemas
+    como `javascript:`/`data:` (e valores sem esquema) são descartados aqui,
+    antes de gravar no banco.
+    """
+    if not value:
+        return None
+    raw = str(value).strip()
+    if not raw:
+        return None
+    try:
+        scheme = urlparse(raw).scheme
+    except ValueError:
+        return None
+    return raw if scheme.lower() in ("http", "https") else None
+
+
 def _apply_result(p, r):
     """Grava um `ProfileResult` no perfil (campos já mapeados pelo provider)."""
     p.status = r.status
     p.followers_count = r.followers_count
     p.following_count = r.following_count
     p.bio = r.bio
-    p.profile_url = r.profile_url
+    p.profile_url = _safe_url(r.profile_url)
     p.full_name = r.full_name
-    p.external_url = r.external_url
-    p.profile_pic_url = r.profile_pic_url
+    p.external_url = _safe_url(r.external_url)
+    p.profile_pic_url = _safe_url(r.profile_pic_url)
     p.posts_count = r.posts_count
     p.category = r.category
     p.is_verified = r.is_verified

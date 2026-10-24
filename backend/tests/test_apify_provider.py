@@ -224,6 +224,57 @@ def test_enriquecimento_persiste_link_origem_data(env, monkeypatch):
         assert prof.enriched_at == quando.replace(tzinfo=None)
 
 
+@pytest.mark.parametrize("raw,esperado", [
+    ("https://www.nasa.gov/", "https://www.nasa.gov/"),
+    ("http://exemplo.com", "http://exemplo.com"),
+    ("javascript:alert(1)", None),
+    ("JAVASCRIPT:alert(1)", None),
+    ("data:text/html,<script>1</script>", None),
+    ("vbscript:msgbox(1)", None),
+    ("//exemplo.com", None),
+    ("", None),
+    (None, None),
+])
+def test_safe_url_so_aceita_http_https(raw, esperado):
+    """`_safe_url` descarta qualquer esquema que não seja http/https (anti-XSS)."""
+    from app import services
+    assert services._safe_url(raw) == esperado
+
+
+def test_enriquecimento_neutraliza_url_maliciosa(env, monkeypatch):
+    """URL `javascript:` é descartada antes de gravar no banco (não chega à prévia)."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import select
+
+    from app import services
+    from app.models import Profile
+    from app.providers.base import ProfileResult
+    from tests.helpers import make_zip, register, upload
+    from tests.test_api import OLD
+
+    client, Session, tmp = env
+    h = register(client)
+    p = tmp / "e.zip"
+    make_zip(p, followers=[("ana_silva", OLD)], following=[])
+
+    class FakeProvider:
+        name = "fake"
+        def fetch(self, username):
+            return ProfileResult(status="ok",
+                                 external_url="javascript:alert(document.cookie)",
+                                 profile_url="https://www.instagram.com/ana_silva",
+                                 source="fake", fetched_at=datetime.now(timezone.utc))
+
+    monkeypatch.setattr(services, "get_provider", lambda: FakeProvider())
+    oid = upload(client, p, h).json()["order_id"]
+    assert services.run_enrichment(oid) == "done"
+    with Session() as db:
+        prof = db.scalar(select(Profile).where(Profile.username == "ana_silva"))
+        assert prof.external_url is None          # neutralizado
+        assert prof.profile_url == "https://www.instagram.com/ana_silva"
+
+
 def test_cache_reusa_enriquecido_ha_menos_de_7_dias(env, monkeypatch):
     """Perfil 'ok' enriquecido há < 7 dias não é reconsultado (usa o do banco)."""
     from datetime import datetime, timezone

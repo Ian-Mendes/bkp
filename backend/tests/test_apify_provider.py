@@ -62,6 +62,41 @@ def test_mapeia_perfil_ok():
     assert r.fetched_at is not None
 
 
+def test_mapeia_campos_adicionais():
+    p = _provider(_run_ok(items=[{
+        "username": "nasa", "followersCount": 96323377, "followsCount": 80,
+        "biography": "bio", "url": "https://www.instagram.com/nasa",
+        "private": False, "verified": True, "postsCount": 4519,
+        "profilePicUrl": "https://scontent/pic.jpg", "fullName": "NASA",
+        "isBusinessAccount": True, "businessCategoryName": "Government Agencies",
+        "externalUrl": "https://www.nasa.gov/",
+    }]))
+    r = p.fetch("nasa")
+    assert r.full_name == "NASA"
+    assert r.external_url == "https://www.nasa.gov/"
+    assert r.profile_pic_url == "https://scontent/pic.jpg"
+    assert r.posts_count == 4519
+    assert r.category == "Government Agencies"
+    assert r.is_verified is True
+    assert r.is_business is True
+
+
+def test_mapeia_booleanos_e_zero_preservados():
+    p = _provider(_run_ok(items=[{
+        "username": "x", "verified": False, "isBusinessAccount": False,
+        "postsCount": 0, "fullName": "", "businessCategoryName": "",
+        "externalUrl": "", "profilePicUrl": "",
+    }]))
+    r = p.fetch("x")
+    assert r.is_verified is False
+    assert r.is_business is False
+    assert r.posts_count == 0
+    assert r.full_name is None
+    assert r.category is None
+    assert r.external_url is None
+    assert r.profile_pic_url is None
+
+
 def test_privada_aproveita_contadores():
     p = _provider(_run_ok(items=[{
         "username": "a", "followersCount": 447, "followsCount": 674,
@@ -96,6 +131,33 @@ def test_dataset_vazio_vira_not_found():
 def test_429_vira_rate_limited():
     p = _provider({"/runs": FakeResponse({}, 429)})
     assert p.fetch("x").status == "rate_limited"
+
+
+def test_fetch_many_mapeia_varios():
+    p = _provider(_run_ok(items=[
+        {"username": "a", "followersCount": 1, "followsCount": 2,
+         "biography": "ba", "url": "https://www.instagram.com/a", "private": False},
+        {"username": "b", "followersCount": 3, "followsCount": 4,
+         "biography": "bb", "url": "https://www.instagram.com/b", "private": False},
+    ]))
+    rs = p.fetch_many(["a", "b"])
+    assert rs["a"].status == "ok" and rs["a"].followers_count == 1
+    assert rs["b"].status == "ok" and rs["b"].following_count == 4
+
+
+def test_fetch_many_perfil_ausente_vira_not_found():
+    p = _provider(_run_ok(items=[
+        {"username": "a", "followersCount": 1, "followsCount": 2,
+         "biography": "", "url": "https://www.instagram.com/a", "private": False},
+    ]))
+    rs = p.fetch_many(["a", "x"])
+    assert rs["a"].status == "ok"
+    assert rs["x"].status == "not_found"
+
+
+def test_fetch_many_429_vira_none():
+    p = _provider({"/runs": FakeResponse({}, 429)})
+    assert p.fetch_many(["a", "b"]) is None
 
 
 def test_run_falho_vira_error():

@@ -4,6 +4,9 @@ import os
 os.environ.setdefault("JWT_SECRET", "segredo-de-teste-apenas-para-pytest-0123456789")
 os.environ.setdefault("DATABASE_URL", "sqlite://")   # <-- ADICIONADO
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
+# Testes herméticos: nunca dependem do provider real (rede/token do .env).
+os.environ["PROVIDER"] = "null"
+os.environ.pop("APIFY_TOKEN", None)
 
 import pytest
 from fastapi.testclient import TestClient

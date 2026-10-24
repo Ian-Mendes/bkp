@@ -59,6 +59,21 @@ def test_process_order_rate_limited_reagenda(env, monkeypatch):
     assert client.get(f"/orders/{oid}", headers=h).json()["status"] == "queued"
 
 
+def test_process_order_soft_time_limit_reagenda(env, monkeypatch):
+    """Estouro de `soft_time_limit` reagenda (não marca `failed`)."""
+    from celery.exceptions import SoftTimeLimitExceeded
+
+    client, Session, h, oid = _make_parsed_order(env)
+
+    def boom(_oid):
+        raise SoftTimeLimitExceeded()
+
+    monkeypatch.setattr(worker.services, "run_enrichment", boom)
+    with pytest.raises(Retry):
+        worker.process_order.run(oid)
+    assert client.get(f"/orders/{oid}", headers=h).json()["status"] == "queued"
+
+
 def test_process_order_excecao_reagenda(env, monkeypatch):
     """Exceções são capturadas e a task reagenda (re-levanta a original em `.run()`)."""
     client, Session, h, oid = _make_parsed_order(env)

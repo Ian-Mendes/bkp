@@ -16,14 +16,19 @@ def process_order(self, order_id: str) -> str:
     """Enriquece os perfis de um pedido.
 
     Idempotente: re-execuções não duplicam enriquecimento (o cache de 7 dias do
-    `run_enrichment` filtra perfis atualizados). Em `rate_limited`, reagenda com
-    backoff exponencial (60s → 120s → 240s); após esgotar, marca `failed`.
+    `run_enrichment` filtra perfis atualizados). Em `rate_limited` ou estouro do
+    `soft_time_limit`, reagenda com backoff exponencial (60s → 120s → 240s);
+    após esgotar, marca `failed`.
     """
     try:
         status = services.run_enrichment(order_id)
     except SoftTimeLimitExceeded:
-        _update_status(order_id, "failed", error="timeout")
-        raise
+        # Progresso já commitado perfil a perfil; reagenda para continuar de onde parou.
+        if self.request.retries >= self.max_retries:
+            _update_status(order_id, "failed", error="timeout")
+            raise
+        _update_status(order_id, "queued")
+        raise self.retry(countdown=60 * (2 ** self.request.retries))
     except Exception as exc:
         if self.request.retries >= self.max_retries:
             _update_status(order_id, "failed", error=f"{type(exc).__name__}: {exc}"[:300])

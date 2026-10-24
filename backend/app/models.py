@@ -47,6 +47,13 @@ class Profile(Base):
     following_count: Mapped[int | None] = mapped_column(Integer)
     bio: Mapped[str | None] = mapped_column(Text)
     profile_url: Mapped[str | None] = mapped_column(String(255))   # link canônico (Apify `url`)
+    full_name: Mapped[str | None] = mapped_column(String(255))     # Apify `fullName`
+    external_url: Mapped[str | None] = mapped_column(Text)         # Apify `externalUrl`
+    profile_pic_url: Mapped[str | None] = mapped_column(Text)      # Apify `profilePicUrl`
+    posts_count: Mapped[int | None] = mapped_column(Integer)       # Apify `postsCount`
+    category: Mapped[str | None] = mapped_column(String(255))      # Apify `businessCategoryName`
+    is_verified: Mapped[bool | None] = mapped_column(Boolean)      # Apify `verified`
+    is_business: Mapped[bool | None] = mapped_column(Boolean)      # Apify `isBusinessAccount`
     enrich_source: Mapped[str | None] = mapped_column(String(30))  # provider que consultou
     enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(20), default="pending")

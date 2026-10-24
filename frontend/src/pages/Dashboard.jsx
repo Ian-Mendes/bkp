@@ -37,6 +37,13 @@ export default function Dashboard() {
         if (active) setUser(u);
         const config = await authenticatedApi("/orders/upload-config");
         if (active) setMaxBytes(config.max_upload_bytes);
+        // Se há um pedido em andamento, acompanha a prévia em vez de enviar outro.
+        const orders = await authenticatedApi("/orders");
+        const ongoing = orders.find((o) => o.status === "queued" || o.status === "processing");
+        if (ongoing) {
+          navigate(`/orders/${ongoing.order_id}`, { replace: true });
+          return;
+        }
       } catch (err) {
         if (!active) return;
         if (err.status === 401) navigate("/login", { replace: true });
@@ -196,6 +203,7 @@ export default function Dashboard() {
         )}
         {profileError && <p>{profileError}</p>}
         {user && <div className="dashboard-actions">
+          <Link to="/orders" className="link">Meus pedidos</Link>
           <button id="out" className="out" disabled={busy || loggingOut} onClick={logout}>{loggingOut ? "Saindo…" : "Sair"}</button>
         </div>}
       </div>

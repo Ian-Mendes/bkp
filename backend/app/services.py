@@ -9,6 +9,7 @@ from .providers import get_provider
 
 WINDOW_DAYS = 380   # ~1 ano: indício de filtro de período no export
 ENRICH_CACHE_DAYS = 7   # reusa perfil "ok" enriquecido há menos de uma semana
+ENRICH_BATCH_SIZE = 25   # usernames por run do Apify (o actor aceita lista)
 
 def retention_days() -> int:
     return int(os.getenv("RETENTION_DAYS", "30"))
@@ -71,6 +72,25 @@ def delete_orders(db, order_ids):
     db.commit()
     return len(order_ids)
 
+
+def _apply_result(p, r):
+    """Grava um `ProfileResult` no perfil (campos já mapeados pelo provider)."""
+    p.status = r.status
+    p.followers_count = r.followers_count
+    p.following_count = r.following_count
+    p.bio = r.bio
+    p.profile_url = r.profile_url
+    p.full_name = r.full_name
+    p.external_url = r.external_url
+    p.profile_pic_url = r.profile_pic_url
+    p.posts_count = r.posts_count
+    p.category = r.category
+    p.is_verified = r.is_verified
+    p.is_business = r.is_business
+    p.enrich_source = r.source
+    p.enriched_at = r.fetched_at
+
+
 def run_enrichment(order_id: str) -> str:
     """Enriquece os perfis pendentes de um pedido, reusando o cache de 7 dias.
 
@@ -78,10 +98,11 @@ def run_enrichment(order_id: str) -> str:
     `enriched_at` NULL), desatualizados (>= ENRICH_CACHE_DAYS) ou com último
     status diferente de `ok` — `not_found`/`private`/`error`. 
     
-    Com `NullProvider` a execução é instantânea; ao escalar
-    com um provider real, reintroduzir fila (Celery) e processamento em lotes.
+    Com `fetch_many` (Apify) envia lotes de `ENRICH_BATCH_SIZE` por run; sem ele
+    (NullProvider) consulta perfil a perfil. Progresso commitado a cada perfil.
     """
     provider = get_provider()
+    fetch_many = getattr(provider, "fetch_many", None)
     cutoff = datetime.now(timezone.utc) - timedelta(days=ENRICH_CACHE_DAYS)
     with SessionLocal() as db:
         order = db.get(Order, uuid.UUID(order_id))
@@ -97,21 +118,27 @@ def run_enrichment(order_id: str) -> str:
             .distinct()
             .order_by(Profile.id)
         )
-        for p in db.scalars(db_query).all():
-            r = provider.fetch(p.username)
-            if r.status == "rate_limited":
-                db.commit()                    # salva o progresso feito até aqui
-                order.status = "parsed"        # sem fila de retry: volta a permitir "start"
+        profiles = db.scalars(db_query).all()
+        if fetch_many is not None:
+            for start in range(0, len(profiles), ENRICH_BATCH_SIZE):
+                batch = profiles[start:start + ENRICH_BATCH_SIZE]
+                results = fetch_many([p.username for p in batch])
+                if results is None:            # rate_limited: volta a permitir "start"
+                    order.status = "parsed"
+                    db.commit()
+                    return order.status
+                for p in batch:
+                    _apply_result(p, results[p.username])
+                    db.commit()                # progresso durável e visível perfil a perfil
+        else:
+            for p in profiles:
+                r = provider.fetch(p.username)
+                if r.status == "rate_limited":
+                    order.status = "parsed"
+                    db.commit()
+                    return order.status
+                _apply_result(p, r)
                 db.commit()
-                return order.status
-            p.status = r.status
-            p.followers_count = r.followers_count
-            p.following_count = r.following_count
-            p.bio = r.bio
-            p.profile_url = r.profile_url
-            p.enrich_source = r.source
-            p.enriched_at = r.fetched_at
-        db.commit()
         order.status = "done"
         db.commit()
         return order.status

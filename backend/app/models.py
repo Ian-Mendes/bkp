@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import (JSON, Boolean, false, String, Integer, Text, DateTime,
+from sqlalchemy import (JSON, Boolean, String, Integer, Text, DateTime,
                         ForeignKey, UniqueConstraint, Uuid)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .db import Base
@@ -13,10 +13,24 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     # incrementado em logout/troca de senha: invalida todos os tokens antigos
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class Invite(Base):
+    """Convite de acesso (backoffice): um link de uso único por e-mail.
+
+    O operador cria o convite via `python -m app.invite` e distribui o link
+    fora da aplicação; não há verificação por e-mail (o endereço é confiável no
+    momento do convite). Expira em `INVITE_DAYS` e é consumido no aceite.
+    """
+    __tablename__ = "invites"
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)  # sha256 do token; nunca o cru
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # NULL = pendente
 
 class Order(Base):
     __tablename__ = "orders"

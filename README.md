@@ -21,8 +21,8 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 | Normalização e deduplicação | ✅ Funcionando |
 | Análise de integridade (janelas, cobertura) | ✅ Funcionando |
 | Autenticação (JWT + Argon2) | ✅ Funcionando |
-| Confirmação de e-mail e recuperação de senha | ✅ Funcionando (Mailpit em dev) |
-| Frontend: login, cadastro, confirmação e recuperação de senha | ✅ Funcionando |
+| Convite de acesso (backoffice, sem e-mail) | ✅ Funcionando |
+| Frontend: login e aceite de convite | ✅ Funcionando |
 | Isolamento entre clientes | ✅ Testado |
 | Retenção e exclusão (LGPD) | ✅ Implementado |
 | Sessão em cookie httpOnly + refresh | ✅ Implementado |
@@ -49,7 +49,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 **Infraestrutura**
 - Docker + Docker Compose
 - Armazenamento privado de arquivos (volume local; S3 na produção)
-- Mailpit (SMTP de desenvolvimento, captura os e-mails)
+- Sem e-mail: convites de acesso gerados por comando de backoffice
 - Caddy (gateway de produção, perfil `prod`; em dev o Vite serve o frontend)
 
 **Frontend**
@@ -63,7 +63,7 @@ normalizada em CSV/XLSX pronta para filtrar, segmentar e usar.
 bkp/
 ├── README.md
 ├── CONTRIBUTING.md
-├── docker-compose.yml          # db, mailpit, api (+ perfil prod com Caddy)
+├── docker-compose.yml          # db, redis, api, worker (+ perfil prod com Caddy)
 ├── docker-compose.override.yml # dev: sobe o frontend (Vite) com hot reload
 ├── .env.example
 ├── .github/
@@ -91,9 +91,9 @@ bkp/
     │   ├── services.py         # Regras de negócio (enriquecimento síncrono)
     │   ├── exporter.py         # CSV/XLSX + anti-injeção
     │   ├── models.py           # SQLAlchemy
-    │   ├── auth.py             # Cadastro, login, confirmação de e-mail, recuperação de senha
-    │   ├── security.py         # Hash + JWT (sessão e tokens de e-mail)
-    │   ├── mailer.py           # Envio SMTP
+    │   ├── auth.py             # Convite (aceite), login, sessão e revogação
+    │   ├── invite.py           # Comando de backoffice: gera links de convite
+    │   ├── security.py         # Argon2 + JWT (sessão e refresh) + hash de convite
     │   ├── rate.py             # Rate limiting (em memória)
     │   └── providers/          # Fontes de enriquecimento
     │       ├── base.py
@@ -213,14 +213,13 @@ Rode os comandos abaixo, na ordem. Cada um tem o resultado esperado.
 
 | # | Comando | Resultado esperado |
 |---|---------|--------------------|
-| 1 | `docker compose ps` | 4 serviços `Up` (`api`, `db`, `mailpit`, `frontend`); `db` e `mailpit` com `(healthy)` |
+| 1 | `docker compose ps` | 5 serviços `Up` (`api`, `db`, `redis`, `worker`, `frontend`); `db` com `(healthy)` |
 | 2 | `docker compose logs api --tail 20` | Termina com `Application startup complete` e **sem** traceback |
 | 3 | `curl -i http://localhost:8000/health` | `HTTP/1.1 200 OK` |
 | 4 | `docker compose exec api sh -c 'echo ${#JWT_SECRET}'` | `64` (ou pelo menos `32`) |
-| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `orders`, `profiles`, `takeout_entries`), provando que o banco aceita a senha |
+| 5 | `docker compose exec db psql -U app -d backup -c '\dt'` | Lista as tabelas (`users`, `invites`, `orders`, `profiles`, `takeout_entries`), provando que o banco aceita a senha |
 | 6 | `docker compose exec api pytest` | Todos os testes passam |
 | 7 | Abrir http://localhost:3000 | Tela de login do frontend |
-| 8 | Abrir http://localhost:8025 | Caixa de entrada do Mailpit |
 
 > ⚠️ **O `pytest` passar não prova que o banco está conectado.** Os testes passam mesmo
 > quando a API não consegue autenticar no Postgres. Sempre confirme também os passos
@@ -232,14 +231,19 @@ Serviços e portas (todos só em localhost):
 |---------|-----|
 | Frontend | http://localhost:3000 |
 | API (Swagger em `/docs`, só em desenvolvimento) | http://localhost:8000 |
-| Mailpit (e-mails capturados) | http://localhost:8025 |
 
-### 6. Criar a primeira conta
 
-1. Abra http://localhost:3000 e cadastre-se.
-2. Abra o Mailpit (http://localhost:8025) e clique no link de confirmação.
-3. Na tela que abrir, informe a **senha do cadastro** para ativar a conta.
-4. Faça login.
+### 6. Criar o primeiro convite e ativar a conta
+
+1. Gere um convite pelo comando de backoffice:
+
+   ```bash
+   docker compose exec api python -m app.invite voce@exemplo.com
+   ```
+
+2. O comando imprime um link de uso único (ex.: `http://localhost:3000/invite/<token>`).
+   Envie esse link para a pessoa, fora da aplicação.
+3. Ao abrir o link, a pessoa define a senha e já entra no painel (sem verificação por e-mail).
 
 ---
 
@@ -331,7 +335,7 @@ Atalhos para os comandos mais comuns (tudo em container; nunca `pytest`/`pip`/`n
 ## Resetar os Dados
 
 ```bash
-# Apagar tudo (banco, uploads e e-mails do Mailpit)
+# Apagar tudo (banco e uploads)
 docker compose down -v && docker compose up -d
 
 # Só usuários, pedidos e perfis (e as relações do takeout)
@@ -344,16 +348,32 @@ docker compose restart api
 
 ---
 
-## Testar Confirmação de E-mail e Recuperação de Senha
+## Testar o convite de acesso
 
-Em desenvolvimento nenhum e-mail sai de verdade. Cadastre-se em http://localhost:3000 e abra
-o Mailpit em http://localhost:8025 para clicar no link recebido.
+Não há e-mail: o acesso é por convite gerado no backoffice.
 
-- **Confirmação:** o link abre `/verify-email`, que pede a **senha do cadastro** para ativar a conta.
-- **Recuperação:** em "Esqueci minha senha" informe o e-mail; o link do Mailpit vale 30 min e só funciona uma vez.
-- **Não chegou e-mail?** Veja `docker compose logs api --tail 30` (o envio roda em `BackgroundTasks`, depois da resposta).
-- Cada fluxo (cadastro, reenvio, recuperação) envia no máximo 6 e-mails por hora para o mesmo endereço.
-- O login só funciona depois de confirmar o e-mail.
+```bash
+# Gera um link de uso único (válido por INVITE_DAYS, padrão 7 dias)
+docker compose exec api python -m app.invite voce@exemplo.com
+
+# Valida o convite antes de mostrar o formulário de senha
+curl -i http://localhost:8000/auth/invite/<token>
+```
+
+**Convidar vários usuários (lote):** leia de um arquivo com um e-mail por linha
+(linhas em branco são ignoradas). O `-T` desativa o TTY para o stdin funcionar.
+
+```bash
+# Imprime um link por e-mail
+docker compose exec -T api python -m app.invite < emails.txt
+
+# Salvar os links em um arquivo
+docker compose exec -T api python -m app.invite < emails.txt > convites.txt
+```
+
+- O link é de uso único e expira em 7 dias; re-convidar o mesmo e-mail regenera o link (o antigo morre).
+- E-mail que já tem conta ativa é ignorado (imprime `já tem conta ativa — ignorado`).
+- Definir a senha (`/auth/accept-invite`) já autentica: o usuário cai direto no painel.
 
 ---
 
@@ -385,14 +405,9 @@ PROVIDER=null          # null | apify
 APIFY_TOKEN=           # preencher quando implementar
 APIFY_ACTOR_ID=apify/instagram-profile-scraper
 
-# E-mail (dev: Mailpit; em produção use um provedor SMTP real)
-FRONTEND_URL=http://localhost:3000   # base dos links enviados por e-mail
-SMTP_HOST=mailpit
-SMTP_PORT=1025
-SMTP_USER=
-SMTP_PASSWORD=
-SMTP_STARTTLS=0                      # 1 em provedores com STARTTLS
-MAIL_FROM=BKP <no-reply@bkp.local>
+# Convite de acesso (base do link gerado pelo backoffice; sem e-mail)
+FRONTEND_URL=http://localhost:3000
+INVITE_DAYS=7                        # validade do convite em dias
 
 # Segurança / produção
 APP_ENV=development        # production: ativa HSTS e desativa /docs (a menos que ENABLE_DOCS=1)
@@ -401,7 +416,7 @@ UPLOADS_PER_HOUR=10        # envios de ZIP por usuário por hora
 MAX_ORDERS_PER_USER=20     # pedidos guardados por usuário
 ```
 
-Os valores de e-mail e de segurança têm padrão no código (Mailpit, desenvolvimento); só precisam estar no `.env` para mudar.
+Os valores de segurança têm padrão no código; só precisam estar no `.env` para mudar.
 
 O frontend chama a API pela mesma origem (`/api`), encaminhada pelo proxy
 (Vite em dev, Caddy em produção) — sem variável a configurar; ver `frontend/.env.example`.
@@ -414,17 +429,16 @@ e gere um `JWT_SECRET` e uma senha de banco diferentes para cada ambiente, princ
 ## Fluxo de Uso da API
 
 ```bash
-# 1. Registrar (envia um e-mail de confirmação; não devolve token)
-curl -X POST http://localhost:8000/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"voce@exemplo.com","password":"senha-bem-longa-123"}'
+# 1. Criar convite (backoffice; imprime o link de uso único)
+docker compose exec api python -m app.invite voce@exemplo.com
 
-# 2. Confirmar o e-mail (token do link recebido, em dev veja no Mailpit, e a senha do cadastro)
-curl -X POST http://localhost:8000/auth/verify-email \
+# 2. Aceitar o convite definindo a senha (já autentica)
+curl -X POST http://localhost:8000/auth/accept-invite \
   -H "Content-Type: application/json" \
   -d '{"token":"...","password":"senha-bem-longa-123"}'
+TOKEN="..."
 
-# 3. Fazer login (guarda o token). Sem confirmar o e-mail, retorna 403.
+# 3. (Opcional) Login para renovar/recuperar a sessão
 curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"voce@exemplo.com","password":"senha-bem-longa-123"}'
@@ -460,20 +474,7 @@ curl -o backup.csv  http://localhost:8000/orders/$ORDER_ID/export.csv  -H "Autho
 curl -o backup.xlsx http://localhost:8000/orders/$ORDER_ID/export.xlsx -H "Authorization: Bearer $TOKEN"
 ```
 
-Recuperação de senha:
-
-```bash
-# Pede o link (resposta sempre igual, exista ou não o e-mail)
-curl -X POST http://localhost:8000/auth/forgot-password \
-  -H "Content-Type: application/json" -d '{"email":"voce@exemplo.com"}'
-
-# Define a nova senha com o token do link (mínimo 10 caracteres)
-curl -X POST http://localhost:8000/auth/reset-password \
-  -H "Content-Type: application/json" \
-  -d '{"token":"...","password":"nova-senha-bem-longa-456"}'
-```
-
-Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confirmado, `413` corpo grande demais,
+Códigos úteis: `401` token inválido ou senha errada, `413` corpo grande demais,
 `429` limite de tentativas, `409` limite de pedidos guardados por usuário.
 
 ---
@@ -483,12 +484,9 @@ Códigos úteis: `401` token inválido ou senha errada, `403` e-mail não confir
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | GET | `/health` | Health check |
-| POST | `/auth/register` | Cadastro (envia e-mail de confirmação; não devolve token) |
-| POST | `/auth/verify-email` | Confirma o e-mail (token do link + senha do cadastro) |
-| POST | `/auth/resend-verification` | Reenvia a confirmação |
-| POST | `/auth/login` | Login (403 se o e-mail não foi confirmado) |
-| POST | `/auth/forgot-password` | Envia link de redefinição de senha |
-| POST | `/auth/reset-password` | Define a nova senha com o token do link |
+| POST | `/auth/accept-invite` | Aceita o convite (define senha) e autentica |
+| GET | `/auth/invite/{token}` | Valida o convite e devolve o e-mail |
+| POST | `/auth/login` | Login |
 | GET | `/auth/me` | Dados do usuário |
 | POST | `/auth/refresh` | Renova o access token a partir do refresh cookie |
 | POST | `/auth/logout` | Invalida os cookies de sessão e refresh |
@@ -548,12 +546,10 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 **Contas e sessões**
 - ✅ Hash de senha com Argon2id.
 - ✅ Limite de tentativas de login (rate limit em memória).
-- ✅ Confirmação de e-mail obrigatória para entrar (link válido por 24 h) e exige a senha do cadastro, o que impede o pré-sequestro de conta por quem cadastrou o e-mail alheio.
-- ✅ Link de redefinição de senha válido por 30 min e de uso único.
+- ✅ Acesso só por convite de uso único (token hasheado, expira em `INVITE_DAYS`); sem auto-cadastro.
+- ✅ `accept-invite` com rate limit por IP; inválido/expirado/já usado devolve a mesma resposta (sem vazar qual).
 - ✅ Trocar a senha (ou fazer logout) derruba as sessões abertas via `token_version`.
 - ✅ Sessão em cookie httpOnly (`bkp_session`) com refresh token (`bkp_refresh`); `token_version` permite revogação em massa.
-- ✅ Cadastro, reenvio e recuperação não revelam se o e-mail está cadastrado (mesma resposta; quem já tem conta recebe um aviso por e-mail).
-- ✅ Teto de 6 e-mails por hora por destinatário em cada fluxo, independente do IP.
 
 **API e uploads**
 - ✅ Cabeçalhos de segurança na API e no frontend (CSP, `X-Frame-Options`, `nosniff`, `Referrer-Policy: no-referrer`; HSTS com `APP_ENV=production`).
@@ -567,7 +563,6 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 - ⚠️ Limite de corpo no proxy (`request_body max_size` no `Caddyfile`): corpos *chunked* não trazem `Content-Length`.
 - ⚠️ Rate limit em memória e agendador de retenção são single-instance: mover para Redis/fila ao escalar para várias réplicas.
 - ⚠️ Versões fixas das dependências (`requirements.txt` sem pin).
-- ⚠️ Cadastro pendente pode ser sobrescrito por terceiros (só atrapalha, não dá acesso); o desenho definitivo guarda o pendente em tabela própria.
 
 > O envio de uma exportação pelo cliente **não concede automaticamente**
 > permissão para uso posterior dos dados de terceiros. Base legal e
@@ -577,48 +572,245 @@ Arquivos **ignorados** pelo parser (fora do escopo):
 
 ## Deploy e Produção
 
-Provedor definido: **Vultr** (VPS). O servidor ainda não foi provisionado; abaixo,
-o que já existe e o que falta para subir em staging/produção.
+Provedor definido: **Vultr (VPS)**. Roteiro passo a passo com comandos exatos e
+critério de "pronto" em cada etapa. Para agentes de IA: siga a ordem — cada passo
+lista o que falta e como validar.
 
-### Topologia planejada (Vultr)
+### Topologia
 
-- **Um VPS (Cloud Compute)** rodando o Docker Compose com `db` + `api` + `web`
-  (Caddy). Uma réplica só, por causa do rate limit e do agendador em memória.
-- **Uploads**: volume local no VPS por ora; a intenção é migrar para o
-  **Vultr Object Storage** (S3-compatível) — as variáveis `S3_*` no `.env.example`
-  já reservam isso (endpoint `https://<região>.vultrobjects.com`).
-- **Domínio + HTTPS**: aponte o DNS do domínio ao IP do VPS e deixe o Caddy
-  emitir o certificado (TLS automático).
+- **Um VPS (Cloud Compute)** rodando o Docker Compose com `db` + `redis` + `api`
+  + `worker` + `web` (Caddy). Réplica única por causa do rate limit em memória e
+  do agendador de retenção (APScheduler) — não escale ainda.
+- **Uploads**: volume local do Docker no VPS por ora. Migração futura para o
+  **Vultr Object Storage** (S3-compatível); as variáveis `S3_*` no `.env.example`
+  já reservam isso, mas **ainda não são usadas no código**.
+- **Domínio + HTTPS**: o DNS aponta para o IP do VPS e o Caddy emite o
+  certificado automaticamente (Let's Encrypt).
 
-### O que já está pronto
+### O que você precisa em mãos (antes de começar)
 
-- **Perfil `prod`**: `docker-compose.prod.yml` usa as imagens do GHCR (sem build
-  no servidor) e sobe o Caddy como gateway único em `:80`/`:443`.
-- **CI e imagens**: todo PR roda os testes (backend) e o build (frontend) via
-  GitHub Actions; a branch `main` publica as imagens em
-  `ghcr.io/ian-mendes/bkp/api` e `ghcr.io/ian-mendes/bkp/web`.
-- **CD**: `deploy.yml` faz SSH no VPS, puxa as imagens, sobe e valida o
-  `/health` (inerte até os secrets existirem).
-- **Healthcheck**: `GET /health` retorna `200 {"status":"ok"}`.
+- [ ] Conta Vultr (com cartão) e chave pública SSH
+- [ ] Domínio (ex.: `backup.exemplo.com`) com acesso ao DNS
+- [ ] Conta GitHub com acesso ao repositório (imagens no GHCR e CD)
+- [ ] Conta Apify (para o enriquecimento real)
+- [ ] Um PAT do GitHub com `read:packages` (ou pacote GHCR público)
 
-### Requisitos de produção (obrigatórios)
+### 1. Provisionar o VPS na Vultr
 
-- **HTTPS obrigatório**: com `APP_ENV=production` o cookie de sessão usa
-  `secure=True` e a API ativa HSTS. No `Caddyfile`, troque `:80` pelo domínio
-  real (ex.: `backup.exemplo.com`) para ativar o TLS automático do Caddy.
-- **Segredos por ambiente**: gere `JWT_SECRET` e `POSTGRES_PASSWORD` distintos
-  para cada ambiente (nunca reuse o de desenvolvimento). Configure um SMTP real
-  (SPF/DKIM) e `FRONTEND_URL` com o domínio público.
-- **Uma réplica só (por ora)**: o rate limit (`rate.py`) e o agendador de
-  retenção (APScheduler) são em memória/single-instance. Não escale para mais de
-  uma réplica até a fila Redis voltar (Issue #11).
+1. Acesse my.vultr.com → **Products → Deploy New Server**.
+2. Escolha:
+   - **Type**: Cloud Compute – Regular Performance (ou High Frequency)
+   - **Image**: Ubuntu 24.04 LTS x64
+   - **Size**: mínimo 2 GB / 1 vCPU; **recomendado 4 GB** (API + worker Celery +
+     Postgres + Redis na mesma máquina)
+   - **Region**: a mais próxima dos usuários
+   - **SSH Keys**: selecione sua chave pública
+3. **Firewall** (Products → Network → Firewalls): crie um grupo liberando
+   **22 (SSH)**, **80 (HTTP)** e **443 (HTTPS)** e associe ao servidor. **Não**
+   abra 8000, 5432 (Postgres) nem 6379 (Redis) — esses ficam só na rede interna
+   do Docker Compose.
 
-### Deploy (CD via GitHub Actions)
+✅ **Pronto:** você recebeu um IP público e consegue `ssh root@<IP>`.
 
-O workflow `deploy.yml` faz o deploy contínuo por SSH, puxando as imagens do
-GHCR. Roda automaticamente quando o `release.yml` termina na `main` e também
-aceita execução manual ("Actions" → "Deploy" → "Run workflow"), com um campo
-`ref` para escolher a tag — use o `sha` de um commit anterior para **rollback**.
+### 2. Preparar o VPS (uma única vez)
+
+```bash
+ssh root@<IP>
+
+# Docker + plugin Compose v2.26+ (o docker-compose.prod.yml usa !reset/!override)
+apt-get update && apt-get install -y ca-certificates curl
+curl -fsSL https://get.docker.com | sh
+docker compose version          # deve ser >= 2.26
+
+# Diretório do projeto
+mkdir -p /opt/bkp
+
+# Autenticar no GHCR (leitura das imagens). PAT com scope read:packages,
+# ou torne o pacote público no GitHub.
+docker login ghcr.io -u <SEU_USUARIO_GITHUB>
+```
+
+✅ **Pronto:** `docker compose version` ≥ 2.26 e `docker login ghcr.io` sem erro.
+
+### 3. Criar a chave da Apify
+
+1. Crie a conta em console.apify.com.
+2. **Settings → Integrations → API token** → copie o token.
+3. O actor padrão já vem no `.env.example`
+   (`APIFY_ACTOR_ID=apify/instagram-profile-scraper`). Confirme no console que o
+   actor existe e está acessível à sua conta.
+
+Guarde o token — ele vai em `APIFY_TOKEN` no `.env` (passo 5).
+
+✅ **Pronto:** token copiado.
+
+### 4. Apontar o DNS
+
+Crie um registro `A` (ou `CNAME`) no seu DNS apontando o domínio para o IP
+público do VPS:
+
+```bash
+dig +short backup.exemplo.com   # deve retornar o IP do VPS
+```
+
+✅ **Pronto:** o domínio resolve para o IP (a propagação pode levar alguns minutos).
+
+### 5. Criar o `.env` de produção
+
+No servidor, em `/opt/bkp`, crie o `.env` a partir do `.env.example` e preencha
+**todos** os campos abaixo. Gere segredos novos — nunca reuse os de dev.
+
+| Variável | Valor em produção | Como obter |
+|---|---|---|
+| `POSTGRES_PASSWORD` | senha aleatória | `openssl rand -hex 16` |
+| `DATABASE_URL` | `postgresql+psycopg://app:<MESMA_SENHA>@db:5432/backup` | senha **idêntica** à `POSTGRES_PASSWORD` |
+| `REDIS_URL` | `redis://redis:6379/0` | padrão |
+| `REDIS_PASSWORD` | vazio | opcional (o Redis não publica porta) |
+| `JWT_SECRET` | ≥ 32 chars | `openssl rand -hex 32` |
+| `APP_ENV` | `production` | fixo (ativa HSTS e desativa `/docs`) |
+| `ENABLE_DOCS` | `0` | fixo |
+| `FRONTEND_URL` | `https://backup.exemplo.com` | seu domínio (base dos links de convite) |
+| `PROVIDER` | `apify` | para enriquecimento real (`null` desativa) |
+| `APIFY_TOKEN` | token da Apify | passo 3 |
+| `APIFY_ACTOR_ID` | `apify/instagram-profile-scraper` | default |
+
+Atalho (substitua o domínio e o token):
+
+```bash
+cd /opt/bkp
+cp .env.example .env
+PW=$(openssl rand -hex 16)
+JWT=$(openssl rand -hex 32)
+sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$PW/" .env
+sed -i "s#^DATABASE_URL=.*#DATABASE_URL=postgresql+psycopg://app:$PW@db:5432/backup#" .env
+sed -i "s/^JWT_SECRET=.*/JWT_SECRET=$JWT/" .env
+sed -i "s/^APP_ENV=.*/APP_ENV=production/" .env
+sed -i "s/^ENABLE_DOCS=.*/ENABLE_DOCS=0/" .env
+sed -i "s/^FRONTEND_URL=.*/FRONTEND_URL=https://backup.exemplo.com/" .env
+sed -i "s/^PROVIDER=.*/PROVIDER=apify/" .env
+sed -i "s/^APIFY_TOKEN=.*/APIFY_TOKEN=SEU_TOKEN_APIFY/" .env
+grep -nE 'POSTGRES_PASSWORD|DATABASE_URL|JWT_SECRET|APP_ENV|ENABLE_DOCS|FRONTEND_URL|PROVIDER|APIFY_TOKEN' .env
+```
+
+Notas:
+
+- A senha dentro de `DATABASE_URL` precisa ser **idêntica** à `POSTGRES_PASSWORD`
+  (o Postgres só lê a senha na primeira criação do volume).
+- Se definir `REDIS_PASSWORD`, inclua-a na URL:
+  `redis://:SENHA@redis:6379/0`. Para uma réplica única pode deixar ambos vazios.
+- As variáveis `S3_*` continuam **comentadas** (não usadas no código).
+
+✅ **Pronto:** o `grep` mostra as variáveis preenchidas, sem `SENHA`/`SEU_TOKEN` sobrando.
+
+### 6. Ajustar o Caddyfile para o domínio
+
+O domínio vai **embutido na imagem `web`** (o `frontend/Caddyfile` é copiado no
+build). Edite `frontend/Caddyfile` e troque `:80` por `backup.exemplo.com`:
+
+```caddyfile
+backup.exemplo.com {
+    root * /srv
+
+    handle_path /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle {
+        # ... headers e fallback SPA (mantenha o restante como está)
+    }
+}
+```
+
+> Sem o domínio (mantendo `:80`), o Caddy serve HTTP puro e o cookie de sessão
+> (`secure=True` com `APP_ENV=production`) **não funciona** no navegador.
+
+Se usar as imagens do GHCR (passo 8, opção A), **faça commit e push** para o
+`release.yml` reconstruir a `web` com o domínio. No build local (opção B), o
+build usa o Caddyfile do repositório clonado.
+
+✅ **Pronto:** Caddyfile apontando para o domínio (e, no fluxo GHCR, commit enviado).
+
+### 7. Aplicar as migrações do banco (Alembic)
+
+O schema é versionado por Alembic e **não** é criado no boot (não há
+`create_all`). Depois de subir (passo 8), rode:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod exec api alembic upgrade head
+```
+
+Rode de novo sempre que houver revisão nova em `backend/alembic/versions/`.
+
+✅ **Pronto:** `... exec db psql -U app -d backup -c '\dt'` lista `users`, `invites`,
+`orders`, `profiles`, `takeout_entries` e `alembic_version`.
+
+### 8. Subir o ambiente
+
+**Opção A — imagens do GHCR (recomendada; é o que o CD usa):**
+
+```bash
+cd /opt/bkp
+export IMAGE_TAG=main
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
+```
+
+**Opção B — build local no servidor (sem depender do GHCR):**
+
+```bash
+cd /opt/bkp
+docker compose -f docker-compose.yml --profile prod up -d --build   # ou `make prod`
+```
+
+Em seguida rode o passo 7 (migrações) e valide (passo 9).
+
+> `--profile prod` ativa o serviço `web` (Caddy, gateway único em `:80`/`:443`).
+> Em produção `api` e `redis` **não publicam porta**.
+
+### 9. Validar e criar o primeiro convite
+
+```bash
+cd /opt/bkp
+COMPOSE="docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod"
+
+# 1. Serviços de pé (api, db, redis, worker e web)
+$COMPOSE ps
+
+# 2. Healthcheck (a API não publica porta em prod; consulta por dentro do container)
+$COMPOSE exec -T api python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+# 3. HTTPS: abrir https://backup.exemplo.com no navegador (cadeado válido)
+
+# 4. Criar o primeiro convite de acesso (imprime o link de uso único)
+$COMPOSE exec api python -m app.invite voce@exemplo.com
+```
+
+✅ **Pronto:** `/health` responde `200`, o site carrega em HTTPS e o convite abre a
+tela de definir senha.
+
+### 10. Backup do banco (agendar)
+
+```bash
+# pg_dump comprimido; apaga backups com +30 dias (mesma janela da retenção LGPD)
+scripts/backup.sh 30 /opt/bkp/backups
+```
+
+Agende no cron do servidor (ex.: diário):
+
+```cron
+0 3 * * * cd /opt/bkp && ./scripts/backup.sh 30 /opt/bkp/backups >> /var/log/bkp-backup.log 2>&1
+```
+
+Para os serviços voltarem sozinhos após reiniciar a máquina, adicione
+`restart: unless-stopped` a cada serviço (ou gerencie com `systemd`) e garanta
+`sudo systemctl enable docker`.
+
+### Deploy contínuo (CD via GitHub Actions) — opcional
+
+O workflow `deploy.yml` faz o deploy por SSH, puxando as imagens do GHCR. Roda
+automaticamente quando o `release.yml` termina na `main` e também aceita
+execução manual ("Actions" → "Deploy" → "Run workflow"), com um campo `ref` para
+escolher a tag — use o `sha` de um commit anterior para **rollback**.
 
 **Secrets do GitHub** (Settings → Secrets and variables → Actions):
 
@@ -630,23 +822,7 @@ aceita execução manual ("Actions" → "Deploy" → "Run workflow"), com um cam
 | `DEPLOY_PATH` | diretório do projeto no servidor (ex.: `/opt/bkp`) |
 
 Enquanto esses secrets não existirem, o job fica **inerte** (o passo é pulado).
-
-**Preparação única no VPS:**
-
-1. `docker login ghcr.io -u SEU_USUARIO -p SEU_PAT` — o PAT precisa de
-   `read:packages` para `ghcr.io/ian-mendes/bkp/*` (ou torne o pacote público).
-2. Clone o repositório em `DEPLOY_PATH` e crie o `.env` de produção
-   (`APP_ENV=production`, `JWT_SECRET` e `POSTGRES_PASSWORD` próprios, SMTP real,
-   `FRONTEND_URL` com o domínio).
-3. Aponte o DNS do domínio ao IP do VPS e ajuste o `Caddyfile` para o domínio.
-
-**Deploy manual (sem GitHub Actions):**
-
-```bash
-git pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile prod up -d
-```
+A preparação única no VPS (passos 2, 5 e 6) deve ser feita antes de habilitar o CD.
 
 **Validação e rollback:**
 
@@ -661,14 +837,16 @@ IMAGE_TAG=<sha-anterior> docker compose -f docker-compose.yml -f docker-compose.
 O `docker-compose.prod.yml` usa as imagens publicadas (`ghcr.io/ian-mendes/bkp/*`)
 e remove o `--reload`/bind mount de dev. Requer Docker Compose v2.26+.
 
-### Backup do banco
+### Pendências de produção (não esquecer)
 
-```bash
-scripts/backup.sh 30 ./backups   # pg_dump comprimido; remove backups com +30 dias
-```
-
-Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
-`RETENTION_DAYS` do produto (30 dias), em linha com a LGPD.
+- ⚠️ **Migrações no CD**: o `deploy.yml` só faz `pull` + `up`; **não** roda
+  `alembic upgrade head`. Em schema novo, rode o passo 7 manualmente após o
+  deploy (ou automatize o passo no workflow).
+- ⚠️ **Uma réplica só (por ora)**: rate limit (`rate.py`) e agendador de retenção
+  (APScheduler) são em memória/single-instance — não escale para mais de uma
+  réplica até a fila Redis voltar (Issue #11).
+- ⚠️ `--proxy-headers` no uvicorn (para o rate limit ver o IP real atrás do
+  proxy) e limite de corpo no Caddy ainda pendentes — ver "Segurança e LGPD".
 
 ---
 
@@ -677,18 +855,17 @@ Agende no cron do servidor (ex.: diário). A retenção padrão acompanha o
 - [x] Parser JSON + HTML
 - [x] Autenticação e isolamento
 - [x] Exportação CSV/XLSX
-- [x] Confirmação de e-mail e recuperação de senha
-- [x] Frontend: login, cadastro e recuperação de senha
+- [x] Convite de acesso (backoffice, sem e-mail)
+- [x] Frontend: login e aceite de convite
 - [x] **Integração com provedor de enriquecimento (Apify)** — implementado, inativo por padrão (`PROVIDER=null`); ativação com token (#22) e escala com fila (#14)
 - [x] Fila assíncrona (Celery + Redis)
 - [x] Frontend: upload do ZIP
-- [ ] Frontend: lista de pedidos e downloads
+- [x] Frontend: lista de pedidos e downloads
 - [x] Migrações com Alembic (hoje `create_all` + `ALTER` pontual) — #26 (antes do staging)
-- [ ] Provedor SMTP real e domínio (SPF/DKIM) para produção
 - [x] CI (GitHub Actions) e publicação de imagens (GHCR)
 - [ ] Deploy em staging/produção (provedor: Vultr; aguardando provisionamento do servidor)
 - [x] Sessão em cookie `httpOnly`, logout e revogação de sessão
-- [ ] Cadastro pendente em tabela própria
+- [x] Cadastro pendente em tabela própria (tabela `invites`)
 - [ ] Página reserva (backup de perfil)
 - [ ] CRM leve
 - [ ] Agentes de IA para classificação de bios

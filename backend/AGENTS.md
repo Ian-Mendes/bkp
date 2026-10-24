@@ -4,11 +4,11 @@ Complementa o `AGENTS.md` raiz.
 
 ## Stack
 
-Python 3.12 · FastAPI · SQLAlchemy 2.0 · PostgreSQL 16 · APScheduler · PyJWT +
-Argon2 · openpyxl · pytest (SQLite em memória nos testes).
+Python 3.12 · FastAPI · SQLAlchemy 2.0 · PostgreSQL 16 · Celery + Redis ·
+APScheduler · PyJWT + Argon2 · openpyxl · pytest (SQLite em memória nos testes).
 
-Sem Celery/Redis no MVP: e-mail roda em `BackgroundTasks`, o enriquecimento é
-síncrono e a retenção roda no agendador do `main.py`.
+Sem e-mail: acesso por convite gerado no backoffice (`python -m app.invite`).
+O enriquecimento roda no worker Celery; a retenção roda no agendador do `main.py`.
 
 ## Regras de ouro
 
@@ -31,38 +31,41 @@ síncrono e a retenção roda no agendador do `main.py`.
 
 | Módulo | Responsabilidade |
 |---|---|
-| `main.py` | App FastAPI, lifespan (create_all + `ALTER` + agendador de retenção), middleware de segurança, rotas `/orders`. |
-| `auth.py` | Rotas `/auth`; e-mail via `BackgroundTasks` (`enqueue_email`). |
-| `services.py` | Criação de pedido, análise de integridade, `run_enrichment` (síncrono), `purge_expired_orders`. |
+| `main.py` | App FastAPI, lifespan (agendador de retenção), middleware de segurança, rotas `/orders`. |
+| `auth.py` | Rotas `/auth`: login, aceite de convite, sessão e revogação. |
+| `invite.py` | Comando de backoffice: gera links de convite de uso único. |
+| `services.py` | Convites (`create_invite`/`accept_invite`), pedidos, `run_enrichment` (lote + commit por perfil), `purge_expired_orders`. |
 | `importer.py` | Parser do Takeout (JSON + HTML) + guardas de ZIP bomb. |
 | `exporter.py` | CSV/XLSX + anti-injeção (`safe`). |
 | `rate.py` | Rate limiting em janela fixa, em memória. |
-| `worker.py` | Stub comentado (scaffolding da fila — não remover). |
+| `worker.py` | Task Celery `process_order` (enriquecimento assíncrono). |
 
 ## Comandos
 
 ```bash
 docker compose exec api pytest
-docker compose exec api pytest tests/test_auth.py::test_recuperar_senha
+docker compose exec api pytest tests/test_auth.py::test_convite_aceito_autentica_e_login
 docker compose exec api pytest -k importer -q
 docker compose exec api python -c "import app.main"
+docker compose exec api python -m app.invite a@b.com
 ```
 
 ## Testes
 
-- `tests/`: `test_api.py`, `test_auth.py`, `test_email.py`, `test_importer.py`,
-  `test_security.py`, `test_orders_access.py`.
-- `conftest.py`: `fake_rate` (autouse) e `fake_email` (autouse) substituem o
-  rate limit e o `enqueue_email`; `env` sobe SQLite em memória, sobrescreve
-  `get_db`, redireciona `main.UPLOAD_DIR` e religa `services.SessionLocal`.
-  Retorna `(client, Session, tmp_path)`.
-- `helpers.py`: `make_zip`, `make_zip_html`, `register`, `upload`, `last_token`.
+- `tests/`: `test_api.py`, `test_auth.py`, `test_importer.py`, `test_security.py`,
+  `test_orders_access.py`, `test_worker.py`, `test_apify_provider.py`.
+- `conftest.py`: `fake_rate` (autouse) e `fake_celery` (autouse); `env` sobe
+  SQLite em memória, sobrescreve `get_db`, redireciona `main.UPLOAD_DIR` e
+  religa `services.SessionLocal`. Retorna `(client, Session, tmp_path)`.
+- `helpers.py`: `make_zip`, `make_zip_html`, `invite`, `register`, `upload`.
 - Sem cobertura/linter — teste o invariante, não só o caminho feliz.
 
 ## Invariantes de segurança (não regredir)
 
-- Anti-enumeração; sessão com fingerprint de senha (`security.py`); tokens com
-  propósito (verify/reset) não valem como sessão.
+- Acesso só por convite de uso único (token hasheado, expira em `INVITE_DAYS`);
+  sem auto-cadastro; sessão com fingerprint de senha (`security.py`).
+- Convite não vale como sessão; `accept-invite` com rate limit e resposta única
+  para inválido/expirado/usado.
 - `exporter.safe` em toda célula; `no-store` em `/auth` e `/orders`; headers em tudo.
 - Rate limit (`rate.py`), limite de corpo (`main.py`) e guardas de ZIP bomb
   (`importer.py`) permanecem. `JWT_SECRET` ≥ 32 caracteres.
@@ -70,15 +73,18 @@ docker compose exec api python -c "import app.main"
 ## Playbooks
 
 - Novo endpoint: `current_user` + `get_db`, `_get_order` p/ ownership (404), teste.
-- Novo provider: `fetch() -> ProfileResult`; o `rate_limited` volta a `parsed`
-  em `services.run_enrichment` (sem fila de retry no MVP).
-- Schema: atualize `models.py` **e** o `ALTER TABLE` manual (`main.py`, lifespan).
+- Novo provider: `fetch() -> ProfileResult` (e, se fizer sentido, `fetch_many()`
+  para lote); o `rate_limited` volta a `parsed` em `services.run_enrichment`.
+- Schema: edite `models.py`, rode `alembic revision --autogenerate`, revise e
+  `alembic upgrade head` (nunca `create_all`/`ALTER` manual).
+- Convite: `create_invite`/`accept_invite` em `services.py`; o comando CLI fica
+  em `invite.py`.
 
 ## Armadilhas
 
-- Sem Alembic; `create_all` não altera tabelas existentes.
+- Alembic versiona o schema; `create_all` não altera tabelas existentes.
 - `with_for_update` é no-op no SQLite.
 - Rate limit em memória: zera no restart, single-instance. Agendador de retenção
   também (single-instance).
-- Dependências sem pin; `PROVIDER` só aceita `null`. Upload apagado após parsing
-  (salvo `KEEP_UPLOADS=1`).
+- Datetimes no SQLite perdem tz: compare em SQL, não em Python.
+- Dependências sem pin; upload apagado após parsing (salvo `KEEP_UPLOADS=1`).

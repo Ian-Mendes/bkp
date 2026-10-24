@@ -32,7 +32,8 @@ def test_arquivo_invalido(env):
 
 def test_perfil_so_guarda_campos_permitidos():
     cols = {c.name for c in Profile.__table__.columns}
-    assert cols == {"id", "username", "profile_url", "followers_count", "following_count", "bio", "status", "enrich_source", "enriched_at"}
+    assert cols == {"id", "username", "profile_url", "followers_count", "following_count", "bio", "status", "enrich_source", "enriched_at",
+                    "full_name", "external_url", "profile_pic_url", "posts_count", "category", "is_verified", "is_business"}
     entries = {c.name for c in TakeoutEntry.__table__.columns}
     assert entries == {"id", "order_id", "username", "relation"}
 
@@ -69,7 +70,9 @@ def test_csv_ordenacao_null_zero_e_formula(env):
         db.commit()
     r = client.get(f"/orders/{oid}/export.csv?sort_by=followers_count&direction=desc", headers=h)
     rows = list(csv.DictReader(io.StringIO(r.content.decode("utf-8-sig"))))
-    assert list(rows[0].keys()) == ["username", "tipo", "profile_url", "followers_count", "following_count", "bio", "status"]
+    assert list(rows[0].keys()) == ["username", "tipo", "full_name", "profile_url", "external_url", "profile_pic_url",
+                                    "followers_count", "following_count", "posts_count", "bio", "category",
+                                    "is_verified", "is_business", "status"]
     assert [x["username"] for x in rows] == ["ana_silva", "bob", "carla"]
     assert [x["tipo"] for x in rows] == ["ambos", "seguidor", "seguindo"]
     assert rows[0]["bio"].startswith("'=")          # fórmula neutralizada
@@ -87,7 +90,9 @@ def test_relatorio_e_xlsx(env):
     rep = client.get(f"/orders/{oid}/report", headers=h).json()
     assert rep["total_profiles"] == 3
     assert rep["by_relationship"] == {"follower": 1, "following": 1, "both": 1}
-    assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio", "profile_url"}
+    assert set(rep["field_coverage"]) == {"followers_count", "following_count", "bio", "profile_url",
+                                          "full_name", "external_url", "profile_pic_url", "posts_count",
+                                          "category", "is_verified", "is_business"}
     assert rep["field_coverage"]["followers_count"]["filled"] == 0
     wb = openpyxl.load_workbook(io.BytesIO(client.get(f"/orders/{oid}/export.xlsx", headers=h).content))
     assert wb.sheetnames == ["Perfis", "Resumo"]

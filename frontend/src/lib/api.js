@@ -40,7 +40,11 @@ export async function api(path, opts = {}) {
 
 export async function download(path) {
   // Baixa um arquivo (CSV/XLSX) e dispara o salvamento no navegador.
-  const res = await request(path);
+  // Sessão expirada (401): tenta renovar via refresh cookie e repete uma vez.
+  let res = await request(path);
+  if (res.status === 401 && (await refreshSession())) {
+    res = await request(path);
+  }
   if (!res.ok) {
     const data = await res.json().catch(() => null);
     const err = new Error(errorMessage(data, res.status));

@@ -316,3 +316,93 @@ a { color: #4f46e5; }
   .upload-card { padding: 20px; }
   .upload-drop { padding: 12px; }
 }
+
+/* =========================================================
+   Pedidos e prévia de perfis
+   ========================================================= */
+.app-page { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+.app-topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.app-topbar h1 { font-size: 20px; margin: 0; }
+.app-nav { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.app-nav .out { margin-top: 0; }
+
+.panel {
+  background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+  padding: 24px; margin-bottom: 20px;
+}
+.panel h2 { font-size: 18px; margin: 0 0 12px; }
+
+.order-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; margin-bottom: 4px;
+}
+.order-id { font-family: monospace; font-size: 13px; color: #6b7280; }
+
+.order-status {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+}
+.status-done { background: #ecfdf5; color: #047857; }
+.status-ongoing { background: #eef2ff; color: #4338ca; }
+.status-failed { background: #fef2f2; color: #b91c1c; }
+.status-idle { background: #f3f4f6; color: #6b7280; }
+
+.summary-grid { display: flex; gap: 28px; flex-wrap: wrap; margin: 16px 0; }
+.summary-item { min-width: 110px; }
+.summary-item .num { font-size: 24px; font-weight: 700; }
+.summary-item .label { font-size: 13px; color: #6b7280; }
+
+.download-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.download-bar .hint { font-size: 13px; color: #6b7280; }
+
+.btn-sm { width: auto; padding: 8px 14px; font-size: 14px; }
+
+.filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
+.filters input[type="search"] { flex: 1; min-width: 180px; margin-bottom: 0; }
+.filters select {
+  padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+  font-size: 14px; background: #fff; font-family: inherit;
+}
+
+.profile-list { list-style: none; margin: 0; padding: 0; }
+.profile-row { padding: 12px 0; border-bottom: 1px solid #eef0f3; }
+.profile-row:last-child { border-bottom: 0; }
+.profile-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.profile-username { font-weight: 600; min-width: 140px; overflow-wrap: anywhere; }
+.profile-stats { color: #6b7280; font-size: 13px; margin-left: auto; }
+.profile-detail { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.profile-category { font-size: 12px; color: #6b7280; }
+.profile-bio { margin: 0; font-size: 14px; color: #374151; white-space: pre-wrap; overflow-wrap: anywhere; }
+.profile-link { font-size: 13px; color: #4f46e5; word-break: break-all; }
+.badge-info { background: #e0f2fe; color: #0369a1; }
+.profile-pic {  height: auto;}
+.profile-pic img { border-radius: 50%; width: 80px; height: 80px;  border: 2px #0369a1 solid;}
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.badge-rel-seguidor { background: #e0f2fe; color: #0369a1; }
+.badge-rel-seguindo { background: #ede9fe; color: #6d28d9; }
+.badge-rel-ambos { background: #dcfce7; color: #15803d; }
+.badge-ok { background: #dcfce7; color: #15803d; }
+.badge-muted { background: #f3f4f6; color: #6b7280; }
+.badge-warn { background: #fef3c7; color: #b45309; }
+.badge-err { background: #fef2f2; color: #b91c1c; }
+
+.pager { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 16px; }
+.pager .link { font-size: 14px; }
+
+.orders-list { list-style: none; margin: 0; padding: 0; }
+.order-row {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 14px 0; border-bottom: 1px solid #eef0f3;
+}
+.order-row:last-child { border-bottom: 0; }
+.order-main { flex: 1; min-width: 220px; }
+.order-link { text-decoration: none; font-weight: 600; }
+.row-downloads { display: flex; gap: 14px; align-items: center; }
+
+.dashboard-actions { gap: 16px; align-items: center; }

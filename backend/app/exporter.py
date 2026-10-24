@@ -3,7 +3,9 @@ from openpyxl import Workbook
 from sqlalchemy import select, func, or_, case
 from .models import Profile, TakeoutEntry
 
-COLUMNS = ["username", "tipo", "profile_url", "followers_count", "following_count", "bio", "status"]
+COLUMNS = ["username", "tipo", "full_name", "profile_url", "external_url", "profile_pic_url",
+           "followers_count", "following_count", "posts_count", "bio", "category",
+           "is_verified", "is_business", "status"]
 SORTS = {"followers_count": Profile.followers_count,
          "following_count": Profile.following_count,
          "username": Profile.username}
@@ -30,14 +32,21 @@ def tipo(is_follower, is_following):
 
 def row(profile, is_follower, is_following):
     return [safe(x) for x in (profile.username, tipo(is_follower, is_following),
-                              profile.profile_url, profile.followers_count,
-                              profile.following_count, profile.bio, profile.status)]
+                              profile.full_name, profile.profile_url,
+                              profile.external_url, profile.profile_pic_url,
+                              profile.followers_count, profile.following_count,
+                              profile.posts_count, profile.bio, profile.category,
+                              profile.is_verified, profile.is_business, profile.status)]
 
 def to_profile_dict(profile, is_follower, is_following):
     """Item da prévia para o frontend: dados do perfil + relação (sem `safe`)."""
     return {"username": profile.username, "tipo": tipo(is_follower, is_following),
             "status": profile.status, "followers_count": profile.followers_count,
-            "following_count": profile.following_count, "bio": profile.bio}
+            "following_count": profile.following_count, "bio": profile.bio,
+            "profile_url": profile.profile_url, "full_name": profile.full_name,
+            "external_url": profile.external_url, "profile_pic_url": profile.profile_pic_url,
+            "posts_count": profile.posts_count, "category": profile.category,
+            "is_verified": profile.is_verified, "is_business": profile.is_business}
 
 def query_profiles(order_id, sort_by="followers_count", direction="desc", q=None):
     """Linhas do pedido: `(Profile, is_follower, is_following)` derivados das entries.
@@ -107,7 +116,14 @@ def build_report(db, order):
     for name, col in (("followers_count", Profile.followers_count),
                       ("following_count", Profile.following_count),
                       ("bio", Profile.bio),
-                      ("profile_url", Profile.profile_url)):
+                      ("profile_url", Profile.profile_url),
+                      ("full_name", Profile.full_name),
+                      ("external_url", Profile.external_url),
+                      ("profile_pic_url", Profile.profile_pic_url),
+                      ("posts_count", Profile.posts_count),
+                      ("category", Profile.category),
+                      ("is_verified", Profile.is_verified),
+                      ("is_business", Profile.is_business)):
         filled = db.scalar(
             select(func.count(func.distinct(Profile.id)))
             .join(TakeoutEntry, joined)
